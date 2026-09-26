@@ -10,33 +10,102 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as ApiCallbackRouteImport } from './routes/api/callback'
+import { Route as ApiCheckIpRouteImport } from './routes/api/check-ip'
+import { Route as ApiAuthCallbackRouteImport } from './routes/api/auth.callback'
+import { Route as ApiAuthDiscordRouteImport } from './routes/api/auth.discord'
+import { Route as ApiVerifyTokenRouteImport } from './routes/api/verify.$token'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiCallbackRoute = ApiCallbackRouteImport.update({
+  id: '/api/callback',
+  path: '/api/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiCheckIpRoute = ApiCheckIpRouteImport.update({
+  id: '/api/check-ip',
+  path: '/api/check-ip',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthCallbackRoute = ApiAuthCallbackRouteImport.update({
+  id: '/api/auth/callback',
+  path: '/api/auth/callback',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiAuthDiscordRoute = ApiAuthDiscordRouteImport.update({
+  id: '/api/auth/discord',
+  path: '/api/auth/discord',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiVerifyTokenRoute = ApiVerifyTokenRouteImport.update({
+  id: '/api/verify/$token',
+  path: '/api/verify/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/api/callback': typeof ApiCallbackRoute
+  '/api/check-ip': typeof ApiCheckIpRoute
+  '/api/auth/callback': typeof ApiAuthCallbackRoute
+  '/api/auth/discord': typeof ApiAuthDiscordRoute
+  '/api/verify/$token': typeof ApiVerifyTokenRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/api/callback': typeof ApiCallbackRoute
+  '/api/check-ip': typeof ApiCheckIpRoute
+  '/api/auth/callback': typeof ApiAuthCallbackRoute
+  '/api/auth/discord': typeof ApiAuthDiscordRoute
+  '/api/verify/$token': typeof ApiVerifyTokenRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/api/callback': typeof ApiCallbackRoute
+  '/api/check-ip': typeof ApiCheckIpRoute
+  '/api/auth/callback': typeof ApiAuthCallbackRoute
+  '/api/auth/discord': typeof ApiAuthDiscordRoute
+  '/api/verify/$token': typeof ApiVerifyTokenRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/'
+  fullPaths:
+    | '/'
+    | '/api/callback'
+    | '/api/check-ip'
+    | '/api/auth/callback'
+    | '/api/auth/discord'
+    | '/api/verify/$token'
   fileRoutesByTo: FileRoutesByTo
-  to: '/'
-  id: '__root__' | '/'
+  to:
+    | '/'
+    | '/api/callback'
+    | '/api/check-ip'
+    | '/api/auth/callback'
+    | '/api/auth/discord'
+    | '/api/verify/$token'
+  id:
+    | '__root__'
+    | '/'
+    | '/api/callback'
+    | '/api/check-ip'
+    | '/api/auth/callback'
+    | '/api/auth/discord'
+    | '/api/verify/$token'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  ApiCallbackRoute: typeof ApiCallbackRoute
+  ApiCheckIpRoute: typeof ApiCheckIpRoute
+  ApiAuthCallbackRoute: typeof ApiAuthCallbackRoute
+  ApiAuthDiscordRoute: typeof ApiAuthDiscordRoute
+  ApiVerifyTokenRoute: typeof ApiVerifyTokenRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -48,11 +117,51 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/callback': {
+      id: '/api/callback'
+      path: '/api/callback'
+      fullPath: '/api/callback'
+      preLoaderRoute: typeof ApiCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/check-ip': {
+      id: '/api/check-ip'
+      path: '/api/check-ip'
+      fullPath: '/api/check-ip'
+      preLoaderRoute: typeof ApiCheckIpRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/callback': {
+      id: '/api/auth/callback'
+      path: '/api/auth/callback'
+      fullPath: '/api/auth/callback'
+      preLoaderRoute: typeof ApiAuthCallbackRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/auth/discord': {
+      id: '/api/auth/discord'
+      path: '/api/auth/discord'
+      fullPath: '/api/auth/discord'
+      preLoaderRoute: typeof ApiAuthDiscordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/verify/$token': {
+      id: '/api/verify/$token'
+      path: '/api/verify/$token'
+      fullPath: '/api/verify/$token'
+      preLoaderRoute: typeof ApiVerifyTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  ApiCallbackRoute: ApiCallbackRoute,
+  ApiCheckIpRoute: ApiCheckIpRoute,
+  ApiAuthCallbackRoute: ApiAuthCallbackRoute,
+  ApiAuthDiscordRoute: ApiAuthDiscordRoute,
+  ApiVerifyTokenRoute: ApiVerifyTokenRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

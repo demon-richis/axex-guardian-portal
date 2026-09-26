@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as VerifyRouteImport } from './routes/verify'
 import { Route as ApiCallbackRouteImport } from './routes/api/callback'
 import { Route as ApiCheckIpRouteImport } from './routes/api/check-ip'
 import { Route as ApiAuthCallbackRouteImport } from './routes/api/auth.callback'
@@ -19,6 +20,11 @@ import { Route as ApiVerifyTokenRouteImport } from './routes/api/verify.$token'
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const VerifyRoute = VerifyRouteImport.update({
+  id: '/verify',
+  path: '/verify',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiCallbackRoute = ApiCallbackRouteImport.update({
@@ -49,6 +55,7 @@ const ApiVerifyTokenRoute = ApiVerifyTokenRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
   '/api/check-ip': typeof ApiCheckIpRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
@@ -57,6 +64,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
   '/api/check-ip': typeof ApiCheckIpRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
@@ -66,6 +74,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
   '/api/check-ip': typeof ApiCheckIpRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
@@ -76,6 +85,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/verify'
     | '/api/callback'
     | '/api/check-ip'
     | '/api/auth/callback'
@@ -84,6 +94,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/verify'
     | '/api/callback'
     | '/api/check-ip'
     | '/api/auth/callback'
@@ -92,6 +103,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/verify'
     | '/api/callback'
     | '/api/check-ip'
     | '/api/auth/callback'
@@ -101,6 +113,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  VerifyRoute: typeof VerifyRoute
   ApiCallbackRoute: typeof ApiCallbackRoute
   ApiCheckIpRoute: typeof ApiCheckIpRoute
   ApiAuthCallbackRoute: typeof ApiAuthCallbackRoute
@@ -115,6 +128,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/verify': {
+      id: '/verify'
+      path: '/verify'
+      fullPath: '/verify'
+      preLoaderRoute: typeof VerifyRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/callback': {
@@ -157,6 +177,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  VerifyRoute: VerifyRoute,
   ApiCallbackRoute: ApiCallbackRoute,
   ApiCheckIpRoute: ApiCheckIpRoute,
   ApiAuthCallbackRoute: ApiAuthCallbackRoute,

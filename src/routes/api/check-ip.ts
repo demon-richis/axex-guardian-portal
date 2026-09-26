@@ -5,7 +5,9 @@ export const Route = createFileRoute("/api/check-ip")({
     handlers: {
       GET: async ({ request }) => {
         const { checkIp, clientIp } = await import("@/lib/db/client.server");
-        return Response.json(await checkIp(clientIp(request)), { headers: { "cache-control": "no-store" } });
+        return Response.json(await checkIp(clientIp(request)), {
+          headers: { "cache-control": "no-store" },
+        });
       },
     },
   },

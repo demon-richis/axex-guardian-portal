@@ -9,11 +9,16 @@ export const Route = createFileRoute("/api/verify/$token")({
         const { verifyTokens } = await import("@/lib/db/schema");
         try {
           const token = params.token.slice(0, 200);
-          const rows = await getDb().select().from(verifyTokens).where(eq(verifyTokens.token, token)).limit(1);
+          const rows = await getDb()
+            .select()
+            .from(verifyTokens)
+            .where(eq(verifyTokens.token, token))
+            .limit(1);
           const row = rows[0];
           if (!row) return Response.json({ valid: false, reason: "invalid" });
           if (row.used) return Response.json({ valid: false, reason: "used" });
-          if (row.expiresAt.getTime() < Date.now()) return Response.json({ valid: false, reason: "expired" });
+          if (row.expiresAt.getTime() < Date.now())
+            return Response.json({ valid: false, reason: "expired" });
           return Response.json({
             valid: true,
             userId: row.userId,

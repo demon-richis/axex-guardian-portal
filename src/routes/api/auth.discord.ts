@@ -8,7 +8,10 @@ export const Route = createFileRoute("/api/auth/discord")({
         const token = new URL(request.url).searchParams.get("token") ?? "";
         const clientId = process.env["DISCORD_CLIENT_ID"];
         if (!clientId || !token) {
-          return Response.redirect(`${new URL(request.url).origin}/verify?token=${encodeURIComponent(token)}&error=config`, 302);
+          return Response.redirect(
+            `${new URL(request.url).origin}/verify?token=${encodeURIComponent(token)}&error=config`,
+            302,
+          );
         }
         const url = new URL("https://discord.com/oauth2/authorize");
         url.searchParams.set("client_id", clientId);

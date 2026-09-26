@@ -21,7 +21,9 @@ export function clientIp(request: Request): string {
   );
 }
 
-export async function checkIp(ip: string): Promise<{ isVPN: boolean; type: string | null; ip: string }> {
+export async function checkIp(
+  ip: string,
+): Promise<{ isVPN: boolean; type: string | null; ip: string }> {
   if (!ip) return { isVPN: false, type: null, ip };
   try {
     const key = process.env["PROXYCHECK_API_KEY"];

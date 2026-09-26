@@ -8,11 +8,15 @@ export const Route = createFileRoute("/verify")({
     token: z.string().optional(),
     auth: z.string().optional(),
     error: z.string().optional(),
+    demo: z.coerce.string().optional(),
   }),
   head: () => ({
     meta: [
       { title: "Axex Verification — Secure Server Access" },
-      { name: "description", content: "Verify your Discord account with Axex to gain access to the server." },
+      {
+        name: "description",
+        content: "Verify your Discord account with Axex to gain access to the server.",
+      },
       { property: "og:title", content: "Axex Verification" },
       { property: "og:description", content: "Secure Discord server verification by Axex." },
       { property: "og:type", content: "website" },
@@ -23,16 +27,48 @@ export const Route = createFileRoute("/verify")({
 });
 
 const QUESTIONS = [
-  { q: "Which of these is NOT a number?", options: ["Seven", "Four", "Blue", "Nine"], answer: "Blue" },
-  { q: "Which of these is a fruit?", options: ["Chair", "Apple", "Window", "Cloud"], answer: "Apple" },
-  { q: "What comes after Monday?", options: ["Sunday", "Friday", "Tuesday", "January"], answer: "Tuesday" },
-  { q: "Which of these is NOT a color?", options: ["Red", "Eleven", "Blue", "Green"], answer: "Eleven" },
+  {
+    q: "Which of these is NOT a number?",
+    options: ["Seven", "Four", "Blue", "Nine"],
+    answer: "Blue",
+  },
+  {
+    q: "Which of these is a fruit?",
+    options: ["Chair", "Apple", "Window", "Cloud"],
+    answer: "Apple",
+  },
+  {
+    q: "What comes after Monday?",
+    options: ["Sunday", "Friday", "Tuesday", "January"],
+    answer: "Tuesday",
+  },
+  {
+    q: "Which of these is NOT a color?",
+    options: ["Red", "Eleven", "Blue", "Green"],
+    answer: "Eleven",
+  },
   { q: "How many sides does a triangle have?", options: ["4", "5", "3", "6"], answer: "3" },
-  { q: "Which of these is an animal?", options: ["Table", "River", "Eagle", "Thunder"], answer: "Eagle" },
-  { q: "Which season comes after Winter?", options: ["Autumn", "Summer", "Spring", "Storm"], answer: "Spring" },
-  { q: "Which of these is NOT a planet?", options: ["Mars", "Venus", "Cloud", "Saturn"], answer: "Cloud" },
+  {
+    q: "Which of these is an animal?",
+    options: ["Table", "River", "Eagle", "Thunder"],
+    answer: "Eagle",
+  },
+  {
+    q: "Which season comes after Winter?",
+    options: ["Autumn", "Summer", "Spring", "Storm"],
+    answer: "Spring",
+  },
+  {
+    q: "Which of these is NOT a planet?",
+    options: ["Mars", "Venus", "Cloud", "Saturn"],
+    answer: "Cloud",
+  },
   { q: "What is 5 + 3?", options: ["7", "9", "6", "8"], answer: "8" },
-  { q: "Which of these is a vehicle?", options: ["Mountain", "Train", "Ocean", "Forest"], answer: "Train" },
+  {
+    q: "Which of these is a vehicle?",
+    options: ["Mountain", "Train", "Ocean", "Forest"],
+    answer: "Train",
+  },
 ];
 
 type TokenInfo = {
@@ -40,13 +76,14 @@ type TokenInfo = {
   guildMemberCount: number;
   discordUser: { id: string; username: string; avatar: string | null; createdAt: string } | null;
 };
-type ErrorKind = "invalid" | "used" | "timeout" | "generic";
+type ErrorKind = "invalid" | "used" | "timeout" | "lockout" | "generic";
 type Phase = "loading" | "auth" | "vpn" | "captcha" | "done" | "error";
 
 const ERRORS: Record<ErrorKind, [string, string]> = {
   invalid: ["Invalid Link", "This verification link is invalid or has expired."],
   used: ["Already Verified", "This link has already been used."],
   timeout: ["Time Expired", "You did not complete verification in time. Contact server staff."],
+  lockout: ["Verification Locked", "Too many failed attempts — contact server staff"],
   generic: ["Something went wrong", "Please try again or contact server staff."],
 };
 
@@ -58,12 +95,23 @@ const fade = {
 };
 
 function VerifyPage() {
-  const { token = "", auth, error } = Route.useSearch();
+  const { token = "", auth, error, demo } = Route.useSearch();
+  const demoMode = demo === "1";
+  const effectiveToken = demoMode ? "demo-local" : token;
   const [phase, setPhase] = useState<Phase>("loading");
   const [errorKind, setErrorKind] = useState<ErrorKind>("generic");
   const [info, setInfo] = useState<TokenInfo | null>(null);
   const [busy, setBusy] = useState(false);
+  const [attempts, setAttempts] = useState(0);
   const [question] = useState(() => QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)]!);
+
+  const attemptKey = `axex:verify-attempts:${effectiveToken}`;
+
+  useEffect(() => {
+    if (!token) return;
+    const stored = Number(window.localStorage.getItem(attemptKey) ?? 0);
+    setAttempts(Number.isFinite(stored) ? stored : 0);
+  }, [attemptKey, token]);
 
   const fail = (k: ErrorKind) => {
     setErrorKind(k);
@@ -73,7 +121,9 @@ function VerifyPage() {
   const runIpCheck = useCallback(async () => {
     setBusy(true);
     try {
-      const r = (await (await fetch("/api/check-ip", { cache: "no-store" })).json()) as { isVPN: boolean };
+      const r = (await (await fetch("/api/check-ip", { cache: "no-store" })).json()) as {
+        isVPN: boolean;
+      };
       setPhase(r.isVPN ? "vpn" : "captcha");
     } catch {
       setPhase("captcha");
@@ -82,14 +132,37 @@ function VerifyPage() {
     }
   }, []);
 
+  const startDemo = useCallback(() => {
+    setPhase("captcha");
+  }, []);
+
   useEffect(() => {
+    if (demoMode) {
+      setInfo({
+        guildName: "Axex Demo Server",
+        guildMemberCount: 1284,
+        discordUser: {
+          id: "80351110224678912",
+          username: "demo_user",
+          avatar: null,
+          createdAt: "2018-01-01T00:00:00.000Z",
+        },
+      });
+      if (Number(window.localStorage.getItem(attemptKey) ?? 0) >= 3) return fail("lockout");
+      setPhase("auth");
+      return;
+    }
     if (!token) return fail("invalid");
     (async () => {
       try {
         const res = await fetch(`/api/verify/${encodeURIComponent(token)}`);
         const data = (await res.json()) as TokenInfo & { valid: boolean; reason?: string };
-        if (!data.valid) return fail(data.reason === "used" ? "used" : data.reason === "error" ? "generic" : "invalid");
+        if (!data.valid)
+          return fail(
+            data.reason === "used" ? "used" : data.reason === "error" ? "generic" : "invalid",
+          );
         setInfo(data);
+        if (Number(window.localStorage.getItem(attemptKey) ?? 0) >= 3) return fail("lockout");
         if (error) return fail("generic");
         if (auth && data.discordUser) {
           window.history.replaceState(null, "", `/verify?token=${encodeURIComponent(token)}`);
@@ -99,29 +172,67 @@ function VerifyPage() {
         fail("generic");
       }
     })();
-  }, [token, auth, error, runIpCheck]);
+  }, [attemptKey, token, auth, error, demoMode, runIpCheck]);
 
-  const complete = useCallback(async () => {
-    setPhase("done");
-    const u = info?.discordUser;
-    await fetch("/api/callback", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        token,
-        discordId: u?.id,
-        discordTag: u?.username,
-        discordAvatar: u?.avatar,
-        passed: true,
-        vpnDetected: false,
-        accountAge: u ? Math.floor((Date.now() - new Date(u.createdAt).getTime()) / 86400000) : 0,
-      }),
-    }).catch(() => undefined);
-  }, [info, token]);
+  const submitAttempt = useCallback(
+    async (passed: boolean, clickMs: number, timeout = false) => {
+      if (demoMode) return { success: true, passed };
+      const u = info?.discordUser;
+      const response = await fetch("/api/callback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          token,
+          discordId: u?.id,
+          discordTag: u?.username,
+          discordAvatar: u?.avatar,
+          passed,
+          vpnDetected: false,
+          accountAgeDays: u
+            ? Math.floor((Date.now() - new Date(u.createdAt).getTime()) / 86400000)
+            : 0,
+          clickMs,
+          timeout,
+        }),
+      }).catch(() => null);
+      return (await response?.json().catch(() => null)) as {
+        success?: boolean;
+        passed?: boolean;
+        attempts?: number;
+      } | null;
+    },
+    [demoMode, info, token],
+  );
 
-  const step = phase === "auth" || phase === "vpn" || phase === "loading" ? 0 : phase === "captcha" ? 1 : 2;
+  const complete = useCallback(
+    async (clickMs: number) => {
+      const result = await submitAttempt(true, clickMs);
+      if (result?.success && result.passed) setPhase("done");
+      else fail(result?.attempts && result.attempts >= 3 ? "lockout" : "generic");
+    },
+    [submitAttempt],
+  );
+
+  const failedAttempt = useCallback(
+    async (clickMs: number, timeout = false) => {
+      const nextAttempts = attempts + (timeout ? 0 : 1);
+      if (!timeout) {
+        window.localStorage.setItem(attemptKey, String(nextAttempts));
+        setAttempts(nextAttempts);
+      }
+      const result = await submitAttempt(false, clickMs, timeout);
+      if (nextAttempts >= 3 || (result?.attempts ?? 0) >= 3) fail("lockout");
+      else if (timeout) fail("timeout");
+    },
+    [attemptKey, attempts, submitAttempt],
+  );
+
+  const step =
+    phase === "auth" || phase === "vpn" || phase === "loading" ? 0 : phase === "captcha" ? 1 : 2;
   const user = info?.discordUser;
-  const ageDays = user ? Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000) : null;
+  const ageDays = user
+    ? Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000)
+    : null;
 
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background px-4 py-10">
@@ -143,14 +254,21 @@ function VerifyPage() {
             <motion.div key="auth" {...fade} className="space-y-4">
               <Header info={info} />
               {phase === "vpn" ? (
-                <motion.div initial={{ opacity: 0, y: -16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }}>
+                <motion.div
+                  initial={{ opacity: 0, y: -16 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.35 }}
+                >
                   <div className="animate-[redglow_2s_ease-in-out_infinite] rounded-xl border border-destructive/40 bg-[var(--red-soft)] p-4">
                     <div className="flex gap-3">
                       <ShieldX />
                       <div>
-                        <p className="text-sm font-semibold text-foreground">VPN / Proxy Detected</p>
+                        <p className="text-sm font-semibold text-foreground">
+                          VPN / Proxy Detected
+                        </p>
                         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                          We detected a VPN or proxy on your connection. Please disable it completely and try again.
+                          We detected a VPN or proxy on your connection. Please disable it
+                          completely and try again.
                         </p>
                       </div>
                     </div>
@@ -173,7 +291,11 @@ function VerifyPage() {
               )}
               <Stats
                 items={[
-                  ["Account Age", ageDays !== null ? `${ageDays} days` : "—", ageDays !== null ? "g" : "n"],
+                  [
+                    "Account Age",
+                    ageDays !== null ? `${ageDays} days` : "—",
+                    ageDays !== null ? "g" : "n",
+                  ],
                   ["Network", phase === "vpn" ? "VPN Detected ✗" : "Pending", "r"],
                   ["Token", "✓ Valid", "g"],
                   ["Status", phase === "vpn" ? "Blocked" : "Awaiting", "r"],
@@ -183,8 +305,14 @@ function VerifyPage() {
                 <PrimaryButton onClick={runIpCheck} disabled={busy}>
                   I've disabled it — Retry Check
                 </PrimaryButton>
+              ) : demoMode ? (
+                <PrimaryButton onClick={startDemo}>Start Demo Verification</PrimaryButton>
               ) : (
-                <PrimaryButton onClick={() => (window.location.href = `/api/auth/discord?token=${encodeURIComponent(token)}`)}>
+                <PrimaryButton
+                  onClick={() =>
+                    (window.location.href = `/api/auth/discord?token=${encodeURIComponent(token)}`)
+                  }
+                >
                   <DiscordIcon /> Continue with Discord
                 </PrimaryButton>
               )}
@@ -199,16 +327,37 @@ function VerifyPage() {
                 ageDays={ageDays ?? 0}
                 question={question}
                 onPass={complete}
-                onTimeout={() => fail("timeout")}
+                onFail={failedAttempt}
+                onTimeout={(clickMs) => failedAttempt(clickMs, true)}
               />
             </motion.div>
           )}
 
           {phase === "done" && info && (
-            <motion.div key="done" {...fade} className="flex flex-col items-center py-4 text-center">
+            <motion.div
+              key="done"
+              {...fade}
+              className="flex flex-col items-center py-4 text-center"
+            >
               <svg viewBox="0 0 52 52" className="h-16 w-16">
-                <circle cx="26" cy="26" r="24" fill="none" stroke="var(--green)" strokeOpacity="0.2" strokeWidth="2" />
-                <path d="M15 27 l7 7 l15 -16" fill="none" stroke="var(--green)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="check-path" />
+                <circle
+                  cx="26"
+                  cy="26"
+                  r="24"
+                  fill="none"
+                  stroke="var(--green)"
+                  strokeOpacity="0.2"
+                  strokeWidth="2"
+                />
+                <path
+                  d="M15 27 l7 7 l15 -16"
+                  fill="none"
+                  stroke="var(--green)"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className="check-path"
+                />
               </svg>
               <h2 className="mt-4 text-xl font-bold text-foreground">Verification Complete</h2>
               <p className="mt-1 text-sm text-muted-foreground">Welcome to {info.guildName}</p>
@@ -219,7 +368,9 @@ function VerifyPage() {
               </div>
               <div className="my-5 h-px w-full bg-border" />
               <p className="text-sm text-muted-foreground">You may now close this tab.</p>
-              <p className="mt-1 text-xs text-[var(--faint)]">Access has been granted to your account.</p>
+              <p className="mt-1 text-xs text-[var(--faint)]">
+                Access has been granted to your account.
+              </p>
             </motion.div>
           )}
         </AnimatePresence>
@@ -291,7 +442,9 @@ function Header({ info }: { info: TokenInfo }) {
   return (
     <div className="space-y-3">
       <div className="flex items-center gap-2">
-        <div className="rounded-full bg-gradient-to-r from-[var(--red)] to-[#450a0a] px-2.5 py-0.5 text-xs font-bold text-foreground">Ax</div>
+        <div className="rounded-full bg-gradient-to-r from-[var(--red)] to-[#450a0a] px-2.5 py-0.5 text-xs font-bold text-foreground">
+          Ax
+        </div>
         <span className="text-sm font-semibold text-foreground">Axex</span>
         <span className="ml-auto rounded-full border border-[var(--green)]/25 bg-[var(--green-soft)] px-2 py-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--green-text)]">
           Secure
@@ -313,20 +466,40 @@ function Header({ info }: { info: TokenInfo }) {
 }
 
 function Stats({ items }: { items: [string, string, "g" | "r" | "a" | "n"][] }) {
-  const tone = { g: "text-[var(--green-text)]", r: "text-[var(--red-text)]", a: "text-[var(--amber)]", n: "text-foreground" };
+  const tone = {
+    g: "text-[var(--green-text)]",
+    r: "text-[var(--red-text)]",
+    a: "text-[var(--amber)]",
+    n: "text-foreground",
+  };
   return (
     <div className="grid grid-cols-2 gap-2">
       {items.map(([label, value, t]) => (
-        <div key={label} className="rounded-[10px] border border-[var(--surface-border)] bg-[var(--surface)] px-3 py-2.5">
+        <div
+          key={label}
+          className="rounded-[10px] border border-[var(--surface-border)] bg-[var(--surface)] px-3 py-2.5"
+        >
           <p className="text-[10px] uppercase tracking-[0.8px] text-[var(--faint-2)]">{label}</p>
-          <p className={`mt-0.5 text-[12.5px] font-medium transition-colors duration-200 ${tone[t]}`}>{value}</p>
+          <p
+            className={`mt-0.5 text-[12.5px] font-medium transition-colors duration-200 ${tone[t]}`}
+          >
+            {value}
+          </p>
         </div>
       ))}
     </div>
   );
 }
 
-function PrimaryButton({ children, onClick, disabled }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
+function PrimaryButton({
+  children,
+  onClick,
+  disabled,
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       onClick={onClick}
@@ -359,19 +532,22 @@ function Captcha({
   ageDays,
   question,
   onPass,
+  onFail,
   onTimeout,
 }: {
   info: TokenInfo;
   user: NonNullable<TokenInfo["discordUser"]>;
   ageDays: number;
   question: (typeof QUESTIONS)[number];
-  onPass: () => void;
-  onTimeout: () => void;
+  onPass: (clickMs: number) => void;
+  onFail: (clickMs: number) => Promise<void>;
+  onTimeout: (clickMs: number) => void;
 }) {
   const [left, setLeft] = useState(60);
   const [flash, setFlash] = useState<{ opt: string; ok: boolean } | null>(null);
   const shake = useAnimationControls();
   const done = useRef(false);
+  const startedAt = useRef(Date.now());
 
   useEffect(() => {
     const id = setInterval(() => setLeft((s) => Math.max(0, s - 1)), 1000);
@@ -380,7 +556,7 @@ function Captcha({
   useEffect(() => {
     if (left === 0 && !done.current) {
       done.current = true;
-      onTimeout();
+      onTimeout(Date.now() - startedAt.current);
     }
   }, [left, onTimeout]);
 
@@ -389,10 +565,11 @@ function Captcha({
     if (opt === question.answer) {
       done.current = true;
       setFlash({ opt, ok: true });
-      setTimeout(onPass, 650);
+      setTimeout(() => onPass(Date.now() - startedAt.current), 650);
     } else {
       setFlash({ opt, ok: false });
       void shake.start({ x: [-8, 8, -8, 8, 0], transition: { duration: 0.4 } });
+      void onFail(Date.now() - startedAt.current);
       setTimeout(() => setFlash(null), 500);
     }
   };
@@ -417,11 +594,20 @@ function Captcha({
       </div>
 
       <div className="flex items-center gap-3 rounded-xl border border-border bg-[var(--surface)] p-3">
-        <img src={avatar} alt={user.username} className="h-11 w-11 rounded-full border border-[var(--red)]/15" />
+        <img
+          src={avatar}
+          alt={user.username}
+          className="h-11 w-11 rounded-full border border-[var(--red)]/15"
+        />
         <div>
           <p className="text-sm font-bold text-foreground">{user.username}</p>
           <p className="text-[11px] text-muted-foreground">
-            Created {new Date(user.createdAt).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" })}
+            Created{" "}
+            {new Date(user.createdAt).toLocaleDateString(undefined, {
+              year: "numeric",
+              month: "short",
+              day: "numeric",
+            })}
           </p>
         </div>
       </div>
@@ -436,7 +622,9 @@ function Captcha({
       />
 
       <div>
-        <p className="text-[10px] uppercase tracking-[0.8px] text-[var(--faint-2)]">Human Verification</p>
+        <p className="text-[10px] uppercase tracking-[0.8px] text-[var(--faint-2)]">
+          Human Verification
+        </p>
         <p className="mt-1.5 text-sm text-foreground">{question.q}</p>
         <div className="mt-3 grid grid-cols-2 gap-2">
           {question.options.map((o) => {
@@ -470,11 +658,21 @@ function ErrorAlert({ title, desc }: { title: string; desc: string }) {
   return (
     <div className="flex flex-col items-center py-4 text-center">
       <div className="flex h-14 w-14 items-center justify-center rounded-full border border-[var(--red)]/30 bg-[var(--red-soft)]">
-        <svg viewBox="0 0 24 24" className="h-6 w-6" fill="none" stroke="var(--red)" strokeWidth="2.5" strokeLinecap="round">
+        <svg
+          viewBox="0 0 24 24"
+          className="h-6 w-6"
+          fill="none"
+          stroke="var(--red)"
+          strokeWidth="2.5"
+          strokeLinecap="round"
+        >
           <path d="M6 6l12 12M18 6L6 18" />
         </svg>
       </div>
-      <div role="alert" className="mt-5 w-full rounded-xl border border-destructive/40 bg-[var(--red-soft)] p-4 text-left">
+      <div
+        role="alert"
+        className="mt-5 w-full rounded-xl border border-destructive/40 bg-[var(--red-soft)] p-4 text-left"
+      >
         <p className="text-sm font-semibold text-foreground">{title}</p>
         <p className="mt-1 text-xs text-muted-foreground">{desc}</p>
       </div>
@@ -484,7 +682,15 @@ function ErrorAlert({ title, desc }: { title: string; desc: string }) {
 
 function ShieldX() {
   return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="var(--red)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+    <svg
+      viewBox="0 0 24 24"
+      className="h-5 w-5 shrink-0"
+      fill="none"
+      stroke="var(--red)"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
       <path d="M9.5 9.5l5 5M14.5 9.5l-5 5" />
     </svg>
@@ -492,7 +698,14 @@ function ShieldX() {
 }
 function LockIcon() {
   return (
-    <svg viewBox="0 0 24 24" className="relative h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+    <svg
+      viewBox="0 0 24 24"
+      className="relative h-4 w-4"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+    >
       <rect x="5" y="11" width="14" height="10" rx="2" />
       <path d="M8 11V7a4 4 0 018 0v4" />
     </svg>

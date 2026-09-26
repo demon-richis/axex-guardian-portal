@@ -1,4 +1,27 @@
-import { pgTable, text, integer, boolean, timestamp } from "drizzle-orm/pg-core";
+import {
+  boolean,
+  index,
+  integer,
+  jsonb,
+  pgTable,
+  serial,
+  text,
+  timestamp,
+  uniqueIndex,
+} from "drizzle-orm/pg-core";
+
+export const guildConfigs = pgTable("guild_configs", {
+  guildId: text("guild_id").primaryKey(),
+  guildName: text("guild_name").notNull(),
+  guildIcon: text("guild_icon"),
+  memberCount: integer("member_count").default(0),
+  webhookUrl: text("webhook_url").notNull(),
+  logChannelId: text("log_channel_id"),
+  verifiedRoleId: text("verified_role_id"),
+  quarantineRoleId: text("quarantine_role_id"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
 
 export const verifyTokens = pgTable("verify_tokens", {
   token: text("token").primaryKey(),
@@ -12,5 +35,56 @@ export const verifyTokens = pgTable("verify_tokens", {
   // Filled by the OAuth callback so the final result can't be forged by the browser
   discordId: text("discord_id"),
   discordUsername: text("discord_username"),
+  discordTag: text("discord_tag"),
   discordAvatar: text("discord_avatar"),
+  ipAddress: text("ip_address"),
+  vpnDetected: boolean("vpn_detected").default(false),
+  vpnType: text("vpn_type"),
+  attempts: integer("attempts").default(0).notNull(),
+  flagged: boolean("flagged").default(false).notNull(),
+  flagReason: text("flag_reason"),
+  completedAt: timestamp("completed_at", { withTimezone: true }),
 });
+
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: serial("id").primaryKey(),
+    guildId: text("guild_id").notNull(),
+    userId: text("user_id"),
+    discordTag: text("discord_tag"),
+    eventType: text("event_type").notNull(),
+    severity: text("severity").$type<"info" | "warn" | "critical">().default("info").notNull(),
+    ipAddress: text("ip_address"),
+    vpnDetected: boolean("vpn_detected").default(false).notNull(),
+    accountAgeDays: integer("account_age_days"),
+    clickMs: integer("click_ms"),
+    flagged: boolean("flagged").default(false).notNull(),
+    flagReason: text("flag_reason"),
+    metadata: jsonb("metadata").$type<Record<string, unknown> | null>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => [index("audit_logs_guild_created_idx").on(table.guildId, table.createdAt)],
+);
+
+export const suspiciousAttempts = pgTable(
+  "suspicious_attempts",
+  {
+    id: serial("id").primaryKey(),
+    guildId: text("guild_id").notNull(),
+    userId: text("user_id").notNull(),
+    discordTag: text("discord_tag"),
+    ipAddress: text("ip_address"),
+    vpnType: text("vpn_type"),
+    accountAgeDays: integer("account_age_days"),
+    clickMs: integer("click_ms"),
+    attemptCount: integer("attempt_count").default(1).notNull(),
+    lastAttemptAt: timestamp("last_attempt_at", { withTimezone: true }).defaultNow(),
+    autoBanned: boolean("auto_banned").default(false).notNull(),
+    reason: text("reason"),
+  },
+  (table) => [
+    uniqueIndex("suspicious_attempts_guild_user_idx").on(table.guildId, table.userId),
+    index("suspicious_attempts_guild_last_attempt_idx").on(table.guildId, table.lastAttemptAt),
+  ],
+);

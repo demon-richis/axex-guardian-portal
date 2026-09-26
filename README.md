@@ -1,24 +1,26 @@
 # Axex Guardian Portal
 
-Build a complete Discord bot verification portal. This is a production-ready security verification website for a Discord bot called "Axex". Full spec attached (design system, steps, API routes, database schema, env vars, animations — follow it exactly). Use the attached spec's stack except: use Neon database instead of Supabase. Use Neon serverless postgres with drizzle ORM for all database operations. Remove all Supabase references and replace with Neon DB connection.
+Discord bot verification portal for Axex security bot.
 
-This project was built with [Lovable](https://lovable.dev).
+## Stack
 
-## Build with Lovable
+React, Tailwind CSS, shadcn/ui, Neon DB, and Drizzle ORM.
 
-Continue developing this project in the [Lovable editor](https://lovable.dev/projects/2001cb30-d232-4efb-8fec-01b7c4374c89).
+## Setup
 
-- **Ship faster**: describe what you want to build and Lovable handles the code.
-- **Stay in sync**: every change made in Lovable is committed straight to this repository.
-- **Full ownership**: this code is yours. Push to `main` on GitHub and your changes sync back into Lovable, ready for your next prompt.
+1. Install dependencies with `npm install`.
+2. Copy `.env.example` to `.env` and fill in the values.
+3. Start the development server with `npm run dev`.
 
-## Development
+To preview the verification experience without a Discord bot or database token, open `http://localhost:5173/verify?demo=1` while running the development server. The demo path is disabled in production builds.
 
-Prefer working locally? You need Node.js and npm — [install with nvm](https://github.com/nvm-sh/nvm#installing-and-updating).
+Run `npm run db:push` to apply the Drizzle schema to Neon. Build for production with `npm run build`, then start it with `npm start`.
 
-```sh
-git clone <this-repository-url>
-cd <repository-name>
-npm i
-npm run dev
-```
+## Environment Variables
+
+- `DATABASE_URL`
+- `DISCORD_CLIENT_ID`
+- `DISCORD_CLIENT_SECRET`
+- `DISCORD_REDIRECT_URI`
+- `PROXYCHECK_API_KEY`
+- `AXEX_BOT_API_KEY` (optional shared key for bot registration and audit APIs)

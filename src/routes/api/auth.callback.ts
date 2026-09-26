@@ -34,10 +34,20 @@ export const Route = createFileRoute("/api/auth/callback")({
             headers: { Authorization: `Bearer ${access_token}` },
           });
           if (!userRes.ok) return back("error=auth");
-          const user = (await userRes.json()) as { id: string; username: string; avatar: string | null };
+          const user = (await userRes.json()) as {
+            id: string;
+            username: string;
+            global_name?: string | null;
+            avatar: string | null;
+          };
           await getDb()
             .update(verifyTokens)
-            .set({ discordId: user.id, discordUsername: user.username, discordAvatar: user.avatar })
+            .set({
+              discordId: user.id,
+              discordUsername: user.username,
+              discordTag: user.global_name ?? user.username,
+              discordAvatar: user.avatar,
+            })
             .where(and(eq(verifyTokens.token, token), eq(verifyTokens.used, false)));
           return back("auth=1");
         } catch (e) {

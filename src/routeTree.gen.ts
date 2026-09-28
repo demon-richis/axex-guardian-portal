@@ -19,8 +19,10 @@ import { Route as ApiAuthCallbackRouteImport } from './routes/api/auth.callback'
 import { Route as ApiAuthDiscordRouteImport } from './routes/api/auth.discord'
 import { Route as ApiGuildGuildIdRouteImport } from './routes/api/guild.$guildId'
 import { Route as ApiGuildRegisterRouteImport } from './routes/api/guild.register'
+import { Route as ApiGuildTokenRouteImport } from './routes/api/guild.token'
 import { Route as ApiSuspiciousGuildIdRouteImport } from './routes/api/suspicious.$guildId'
 import { Route as ApiVerifyTokenRouteImport } from './routes/api/verify.$token'
+import { Route as ApiVerifyPendingRouteImport } from './routes/api/verify.pending'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -72,6 +74,11 @@ const ApiGuildRegisterRoute = ApiGuildRegisterRouteImport.update({
   path: '/api/guild/register',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiGuildTokenRoute = ApiGuildTokenRouteImport.update({
+  id: '/api/guild/token',
+  path: '/api/guild/token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSuspiciousGuildIdRoute = ApiSuspiciousGuildIdRouteImport.update({
   id: '/api/suspicious/$guildId',
   path: '/api/suspicious/$guildId',
@@ -80,6 +87,11 @@ const ApiSuspiciousGuildIdRoute = ApiSuspiciousGuildIdRouteImport.update({
 const ApiVerifyTokenRoute = ApiVerifyTokenRouteImport.update({
   id: '/api/verify/$token',
   path: '/api/verify/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiVerifyPendingRoute = ApiVerifyPendingRouteImport.update({
+  id: '/api/verify/pending',
+  path: '/api/verify/pending',
   getParentRoute: () => rootRouteImport,
 } as any)
 
@@ -94,8 +106,10 @@ export interface FileRoutesByFullPath {
   '/api/auth/discord': typeof ApiAuthDiscordRoute
   '/api/guild/$guildId': typeof ApiGuildGuildIdRoute
   '/api/guild/register': typeof ApiGuildRegisterRoute
+  '/api/guild/token': typeof ApiGuildTokenRoute
   '/api/suspicious/$guildId': typeof ApiSuspiciousGuildIdRoute
   '/api/verify/$token': typeof ApiVerifyTokenRoute
+  '/api/verify/pending': typeof ApiVerifyPendingRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -108,8 +122,10 @@ export interface FileRoutesByTo {
   '/api/auth/discord': typeof ApiAuthDiscordRoute
   '/api/guild/$guildId': typeof ApiGuildGuildIdRoute
   '/api/guild/register': typeof ApiGuildRegisterRoute
+  '/api/guild/token': typeof ApiGuildTokenRoute
   '/api/suspicious/$guildId': typeof ApiSuspiciousGuildIdRoute
   '/api/verify/$token': typeof ApiVerifyTokenRoute
+  '/api/verify/pending': typeof ApiVerifyPendingRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -123,8 +139,10 @@ export interface FileRoutesById {
   '/api/auth/discord': typeof ApiAuthDiscordRoute
   '/api/guild/$guildId': typeof ApiGuildGuildIdRoute
   '/api/guild/register': typeof ApiGuildRegisterRoute
+  '/api/guild/token': typeof ApiGuildTokenRoute
   '/api/suspicious/$guildId': typeof ApiSuspiciousGuildIdRoute
   '/api/verify/$token': typeof ApiVerifyTokenRoute
+  '/api/verify/pending': typeof ApiVerifyPendingRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -139,8 +157,10 @@ export interface FileRouteTypes {
     | '/api/auth/discord'
     | '/api/guild/$guildId'
     | '/api/guild/register'
+    | '/api/guild/token'
     | '/api/suspicious/$guildId'
     | '/api/verify/$token'
+    | '/api/verify/pending'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -153,8 +173,10 @@ export interface FileRouteTypes {
     | '/api/auth/discord'
     | '/api/guild/$guildId'
     | '/api/guild/register'
+    | '/api/guild/token'
     | '/api/suspicious/$guildId'
     | '/api/verify/$token'
+    | '/api/verify/pending'
   id:
     | '__root__'
     | '/'
@@ -167,8 +189,10 @@ export interface FileRouteTypes {
     | '/api/auth/discord'
     | '/api/guild/$guildId'
     | '/api/guild/register'
+    | '/api/guild/token'
     | '/api/suspicious/$guildId'
     | '/api/verify/$token'
+    | '/api/verify/pending'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -182,8 +206,10 @@ export interface RootRouteChildren {
   ApiAuthDiscordRoute: typeof ApiAuthDiscordRoute
   ApiGuildGuildIdRoute: typeof ApiGuildGuildIdRoute
   ApiGuildRegisterRoute: typeof ApiGuildRegisterRoute
+  ApiGuildTokenRoute: typeof ApiGuildTokenRoute
   ApiSuspiciousGuildIdRoute: typeof ApiSuspiciousGuildIdRoute
   ApiVerifyTokenRoute: typeof ApiVerifyTokenRoute
+  ApiVerifyPendingRoute: typeof ApiVerifyPendingRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -258,6 +284,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGuildRegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/guild/token': {
+      id: '/api/guild/token'
+      path: '/api/guild/token'
+      fullPath: '/api/guild/token'
+      preLoaderRoute: typeof ApiGuildTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/suspicious/$guildId': {
       id: '/api/suspicious/$guildId'
       path: '/api/suspicious/$guildId'
@@ -270,6 +303,13 @@ declare module '@tanstack/react-router' {
       path: '/api/verify/$token'
       fullPath: '/api/verify/$token'
       preLoaderRoute: typeof ApiVerifyTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/verify/pending': {
+      id: '/api/verify/pending'
+      path: '/api/verify/pending'
+      fullPath: '/api/verify/pending'
+      preLoaderRoute: typeof ApiVerifyPendingRouteImport
       parentRoute: typeof rootRouteImport
     }
   }
@@ -286,8 +326,10 @@ const rootRouteChildren: RootRouteChildren = {
   ApiAuthDiscordRoute: ApiAuthDiscordRoute,
   ApiGuildGuildIdRoute: ApiGuildGuildIdRoute,
   ApiGuildRegisterRoute: ApiGuildRegisterRoute,
+  ApiGuildTokenRoute: ApiGuildTokenRoute,
   ApiSuspiciousGuildIdRoute: ApiSuspiciousGuildIdRoute,
   ApiVerifyTokenRoute: ApiVerifyTokenRoute,
+  ApiVerifyPendingRoute: ApiVerifyPendingRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

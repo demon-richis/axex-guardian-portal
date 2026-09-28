@@ -5,8 +5,10 @@ export const Route = createFileRoute("/api/guild/$guildId")({
   server: {
     handlers: {
       GET: async ({ params, request }) => {
-        const { hasBotApiAccess } = await import("@/lib/api-auth.server");
-        if (!hasBotApiAccess(request)) return Response.json({ success: false }, { status: 401 });
+        console.log("[guild/config] Lookup:", params.guildId);
+        const { validateApiKey } = await import("@/lib/api-auth.server");
+        const authError = validateApiKey(request);
+        if (authError) return authError;
         try {
           const { guildConfigs } = await import("@/lib/db/schema");
           const config = (
@@ -29,10 +31,14 @@ export const Route = createFileRoute("/api/guild/$guildId")({
               .where(eq(guildConfigs.guildId, params.guildId))
               .limit(1)
           )[0];
-          if (!config) return Response.json({ success: false }, { status: 404 });
+          if (!config) {
+            console.log("[guild/config] Not found:", params.guildId);
+            return Response.json({ success: false }, { status: 404 });
+          }
+          console.log("[guild/config] Found:", params.guildId);
           return Response.json({ success: true, guild: config });
         } catch (error) {
-          console.error(error);
+          console.error("[guild/config] Lookup failed:", error);
           return Response.json({ success: false }, { status: 500 });
         }
       },

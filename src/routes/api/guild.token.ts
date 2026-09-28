@@ -14,18 +14,22 @@ export const Route = createFileRoute("/api/guild/token")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const { hasBotApiAccess } = await import("@/lib/api-auth.server");
-        if (!hasBotApiAccess(request))
-          return Response.json({ error: "Unauthorized" }, { status: 401 });
+        console.log("[guild/token] Request received");
+        const { validateApiKey } = await import("@/lib/api-auth.server");
+        const authError = validateApiKey(request);
+        if (authError) return authError;
 
         const parsed = Body.safeParse(await request.json().catch(() => null));
-        if (!parsed.success)
+        if (!parsed.success) {
+          console.error("[guild/token] Invalid request body");
           return Response.json({ error: "Missing or invalid required fields" }, { status: 400 });
+        }
 
         try {
           const { verifyTokens } = await import("@/lib/db/schema");
           const { getDb } = await import("@/lib/db/client.server");
           const { token, userId, guildId, guildName, guildMemberCount, expiresAt } = parsed.data;
+          console.log("[guild/token] Received token:", token);
 
           await getDb()
             .insert(verifyTokens)
@@ -40,6 +44,7 @@ export const Route = createFileRoute("/api/guild/token")({
             })
             .onConflictDoNothing();
 
+          console.log("[guild/token] Saved successfully");
           return Response.json({ success: true, token });
         } catch (error) {
           console.error("[guild/token] Error:", error);

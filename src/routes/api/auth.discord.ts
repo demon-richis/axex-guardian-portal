@@ -4,10 +4,14 @@ export const Route = createFileRoute("/api/auth/discord")({
   server: {
     handlers: {
       GET: async ({ request }) => {
+        console.log("[auth/discord] OAuth start requested");
         const { redirectUri } = await import("@/lib/db/client.server");
         const token = new URL(request.url).searchParams.get("token") ?? "";
         const clientId = process.env["DISCORD_CLIENT_ID"];
         if (!clientId || !token) {
+          console.error(
+            "[auth/discord] Missing Discord client configuration or verification token",
+          );
           return Response.redirect(
             `${new URL(request.url).origin}/verify?token=${encodeURIComponent(token)}&error=config`,
             302,
@@ -20,6 +24,7 @@ export const Route = createFileRoute("/api/auth/discord")({
         url.searchParams.set("scope", "identify");
         url.searchParams.set("state", token);
         url.searchParams.set("prompt", "none");
+        console.log("[auth/discord] Redirecting to Discord OAuth");
         return Response.redirect(url.toString(), 302);
       },
     },

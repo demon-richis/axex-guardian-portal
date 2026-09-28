@@ -1,3 +1,5 @@
+import "dotenv/config";
+
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema";
@@ -34,7 +36,8 @@ export async function checkIp(
     const entry = json[ip];
     if (!entry || typeof entry === "string") return { isVPN: false, type: null, ip };
     return { isVPN: entry.proxy === "yes", type: entry.type ?? null, ip };
-  } catch {
+  } catch (error) {
+    console.error("[check-ip] Proxy lookup failed:", error);
     return { isVPN: false, type: null, ip };
   }
 }

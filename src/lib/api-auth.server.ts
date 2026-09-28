@@ -1,4 +1,11 @@
-export function hasBotApiAccess(request: Request): boolean {
+import "dotenv/config";
+
+export function validateApiKey(request: Request): Response | null {
   const expected = process.env["AXEX_BOT_API_KEY"];
-  return !expected || request.headers.get("x-axex-bot-key") === expected;
+  const provided = request.headers.get("x-api-key");
+  const valid = Boolean(expected && provided && provided === expected);
+  console.log("[api-auth] Key check:", valid ? "PASS" : "FAIL");
+
+  if (valid) return null;
+  return Response.json({ error: "Unauthorized" }, { status: 401 });
 }

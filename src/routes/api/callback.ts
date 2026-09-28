@@ -23,13 +23,17 @@ export const Route = createFileRoute("/api/callback")({
   server: {
     handlers: {
       POST: async ({ request }) => {
+        console.log("[callback] Verification result received");
         const { getDb, snowflakeToDate, checkIp, clientIp } =
           await import("@/lib/db/client.server");
         const { auditLogs, guildConfigs, suspiciousAttempts, verifyTokens } =
           await import("@/lib/db/schema");
         const { postWebhook } = await import("@/lib/webhook.server");
         const parsed = Body.safeParse(await request.json().catch(() => null));
-        if (!parsed.success) return Response.json({ success: false }, { status: 400 });
+        if (!parsed.success) {
+          console.error("[callback] Invalid request body");
+          return Response.json({ success: false }, { status: 400 });
+        }
         const { token, passed } = parsed.data;
         try {
           const db = getDb();
@@ -37,6 +41,7 @@ export const Route = createFileRoute("/api/callback")({
             await db.select().from(verifyTokens).where(eq(verifyTokens.token, token)).limit(1)
           )[0];
           if (!row || row.used || row.expiresAt.getTime() < Date.now() || !row.discordId) {
+            console.error("[callback] Token missing, expired, used, or lacks OAuth identity");
             return Response.json({ success: false }, { status: 400 });
           }
           const serverIp = clientIp(request);
@@ -114,6 +119,24 @@ export const Route = createFileRoute("/api/callback")({
             : [];
           const suspiciousCount = suspicious[0]?.attemptCount ?? 0;
           const autoBanned = suspiciousCount >= 3;
+          if (autoBanned) {
+            await db
+              .update(suspiciousAttempts)
+              .set({ autoBanned: true })
+              .where(
+                and(
+                  eq(suspiciousAttempts.guildId, row.guildId),
+                  eq(suspiciousAttempts.userId, row.discordId),
+                ),
+              );
+          }
+          console.log("[callback] Decision:", {
+            passed: finalPassed,
+            flagged,
+            autoBanned,
+            attempts,
+            event,
+          });
           await db
             .update(verifyTokens)
             .set({
@@ -174,7 +197,7 @@ export const Route = createFileRoute("/api/callback")({
             attempts,
           });
         } catch (e) {
-          console.error(e);
+          console.error("[callback] Failed to process verification:", e);
           return Response.json({ success: false }, { status: 500 });
         }
       },

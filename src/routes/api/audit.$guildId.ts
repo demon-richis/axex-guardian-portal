@@ -5,8 +5,10 @@ export const Route = createFileRoute("/api/audit/$guildId")({
   server: {
     handlers: {
       GET: async ({ params, request }) => {
-        const { hasBotApiAccess } = await import("@/lib/api-auth.server");
-        if (!hasBotApiAccess(request)) return Response.json({ success: false }, { status: 401 });
+        console.log("[audit] Request received for guild:", params.guildId);
+        const { validateApiKey } = await import("@/lib/api-auth.server");
+        const authError = validateApiKey(request);
+        if (authError) return authError;
         const url = new URL(request.url);
         const limit = Math.min(Math.max(Number(url.searchParams.get("limit") ?? 50) || 50, 1), 100);
         const severity = url.searchParams.get("severity");
@@ -26,9 +28,10 @@ export const Route = createFileRoute("/api/audit/$guildId")({
             .where(and(...filters))
             .orderBy(desc(auditLogs.createdAt))
             .limit(limit);
+          console.log("[audit] Returned entries:", logs.length);
           return Response.json({ success: true, logs });
         } catch (error) {
-          console.error(error);
+          console.error("[audit] Query failed:", error);
           return Response.json({ success: false }, { status: 500 });
         }
       },

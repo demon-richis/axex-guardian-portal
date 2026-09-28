@@ -5,8 +5,10 @@ export const Route = createFileRoute("/api/suspicious/$guildId")({
   server: {
     handlers: {
       GET: async ({ params, request }) => {
-        const { hasBotApiAccess } = await import("@/lib/api-auth.server");
-        if (!hasBotApiAccess(request)) return Response.json({ success: false }, { status: 401 });
+        console.log("[suspicious] Request received for guild:", params.guildId);
+        const { validateApiKey } = await import("@/lib/api-auth.server");
+        const authError = validateApiKey(request);
+        if (authError) return authError;
         try {
           const { suspiciousAttempts } = await import("@/lib/db/schema");
           const attempts = await (
@@ -17,9 +19,10 @@ export const Route = createFileRoute("/api/suspicious/$guildId")({
             .from(suspiciousAttempts)
             .where(eq(suspiciousAttempts.guildId, params.guildId))
             .orderBy(desc(suspiciousAttempts.lastAttemptAt));
+          console.log("[suspicious] Returned entries:", attempts.length);
           return Response.json({ success: true, attempts });
         } catch (error) {
-          console.error(error);
+          console.error("[suspicious] Query failed:", error);
           return Response.json({ success: false }, { status: 500 });
         }
       },

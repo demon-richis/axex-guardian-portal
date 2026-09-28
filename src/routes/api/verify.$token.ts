@@ -5,6 +5,7 @@ export const Route = createFileRoute("/api/verify/$token")({
   server: {
     handlers: {
       GET: async ({ params }) => {
+        console.log("[verify/token] Looking up token:", params.token);
         const { getDb, snowflakeToDate } = await import("@/lib/db/client.server");
         const { verifyTokens } = await import("@/lib/db/schema");
         try {
@@ -15,11 +16,22 @@ export const Route = createFileRoute("/api/verify/$token")({
             .where(eq(verifyTokens.token, token))
             .limit(1);
           const row = rows[0];
-          if (!row) return Response.json({ valid: false, reason: "invalid" });
-          if (row.used) return Response.json({ valid: false, reason: "used" });
-          if (row.expiresAt.getTime() < Date.now())
-            return Response.json({ valid: false, reason: "expired" });
-          return Response.json({
+          if (!row) {
+            const result = { valid: false, reason: "invalid" } as const;
+            console.log("[verify/token] Result:", result);
+            return Response.json(result);
+          }
+          if (row.used) {
+            const result = { valid: false, reason: "used" } as const;
+            console.log("[verify/token] Result:", result);
+            return Response.json(result);
+          }
+          if (row.expiresAt.getTime() < Date.now()) {
+            const result = { valid: false, reason: "expired" } as const;
+            console.log("[verify/token] Result:", result);
+            return Response.json(result);
+          }
+          const result = {
             valid: true,
             userId: row.userId,
             guildId: row.guildId,
@@ -35,9 +47,11 @@ export const Route = createFileRoute("/api/verify/$token")({
                   createdAt: snowflakeToDate(row.discordId).toISOString(),
                 }
               : null,
-          });
+          };
+          console.log("[verify/token] Result:", { valid: result.valid, guildId: result.guildId });
+          return Response.json(result);
         } catch (e) {
-          console.error(e);
+          console.error("[verify/token] Lookup failed:", e);
           return Response.json({ valid: false, reason: "error" }, { status: 500 });
         }
       },

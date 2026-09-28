@@ -16,10 +16,16 @@ export const Route = createFileRoute("/api/guild/register")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const { hasBotApiAccess } = await import("@/lib/api-auth.server");
-        if (!hasBotApiAccess(request)) return Response.json({ success: false }, { status: 401 });
+        console.log("[guild/register] Request received");
+        const { validateApiKey } = await import("@/lib/api-auth.server");
+        const authError = validateApiKey(request);
+        if (authError) return authError;
         const parsed = Body.safeParse(await request.json().catch(() => null));
-        if (!parsed.success) return Response.json({ success: false }, { status: 400 });
+        if (!parsed.success) {
+          console.error("[guild/register] Invalid request body");
+          return Response.json({ success: false }, { status: 400 });
+        }
+        console.log("[guild/register] Upserting guild:", parsed.data.guildId);
         try {
           const { guildConfigs } = await import("@/lib/db/schema");
           const config = await (
@@ -51,9 +57,10 @@ export const Route = createFileRoute("/api/guild/register")({
               },
             })
             .returning();
+          console.log("[guild/register] Saved successfully:", parsed.data.guildId);
           return Response.json({ success: true, guild: config[0] });
         } catch (error) {
-          console.error(error);
+          console.error("[guild/register] Failed:", error);
           return Response.json({ success: false }, { status: 500 });
         }
       },

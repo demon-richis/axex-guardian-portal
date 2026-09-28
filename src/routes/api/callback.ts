@@ -152,6 +152,36 @@ export const Route = createFileRoute("/api/callback")({
               completedAt: finalPassed ? new Date() : null,
             })
             .where(and(eq(verifyTokens.token, token), eq(verifyTokens.used, false)));
+          const botWebhookUrl = process.env["BOT_WEBHOOK_URL"];
+          if (!botWebhookUrl) {
+            console.error("[callback] BOT_WEBHOOK_URL is not configured");
+          } else {
+            const botPayload = {
+              guildId: row.guildId,
+              userId: row.discordId,
+              passed: finalPassed,
+              vpnDetected,
+              vpnType,
+              accountAgeDays,
+              clickMs,
+              flagged,
+              flagReason: reason,
+            };
+            try {
+              console.log("[callback] Sending result to bot:", botWebhookUrl);
+              const res = await fetch(botWebhookUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(botPayload),
+              });
+              console.log("[callback] Bot webhook response:", res.status);
+              if (!res.ok) {
+                console.error("[callback] Bot webhook returned an error status:", res.status);
+              }
+            } catch (error) {
+              console.error("[callback] Bot webhook call failed:", error);
+            }
+          }
           const severity = autoBanned ? "critical" : flagged ? "warn" : "info";
           await db.insert(auditLogs).values({
             guildId: row.guildId,

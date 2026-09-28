@@ -24,3 +24,4 @@ Run `npm run db:push` to apply the Drizzle schema to Neon. Build for production 
 - `DISCORD_REDIRECT_URI`
 - `PROXYCHECK_API_KEY`
 - `AXEX_BOT_API_KEY` (optional shared key for bot registration and audit APIs)
+- `BOT_WEBHOOK_URL` (bot verification-result receiver)

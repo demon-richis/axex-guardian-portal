@@ -34,7 +34,13 @@ export const Route = createFileRoute("/api/callback")({
           console.error("[callback] Invalid request body");
           return Response.json({ success: false }, { status: 400 });
         }
-        const { token, passed } = parsed.data;
+        const {
+          token,
+          discordId,
+          discordTag,
+          discordAvatar,
+          passed,
+        } = parsed.data;
         try {
           const db = getDb();
           const row = (
@@ -142,8 +148,8 @@ export const Route = createFileRoute("/api/callback")({
             .set({
               used: finalPassed,
               attempts,
-              discordTag: parsed.data.discordTag ?? row.discordTag ?? row.discordUsername,
-              discordAvatar: parsed.data.discordAvatar ?? row.discordAvatar,
+              discordTag: discordTag ?? row.discordTag ?? row.discordUsername,
+              discordAvatar: discordAvatar ?? row.discordAvatar,
               ipAddress: observedIp || null,
               vpnDetected,
               vpnType,
@@ -159,6 +165,9 @@ export const Route = createFileRoute("/api/callback")({
             const botPayload = {
               guildId: row.guildId,
               userId: row.discordId,
+              discordId: discordId ?? row.discordId,
+              discordTag: discordTag ?? row.discordTag ?? row.discordUsername,
+              discordAvatar: discordAvatar ?? row.discordAvatar,
               passed: finalPassed,
               vpnDetected,
               vpnType,
@@ -171,7 +180,10 @@ export const Route = createFileRoute("/api/callback")({
               console.log("[callback] Sending result to bot:", botWebhookUrl);
               const res = await fetch(botWebhookUrl, {
                 method: "POST",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                  "Content-Type": "application/json",
+                  "x-api-key": process.env["AXEX_BOT_API_KEY"] ?? "",
+                },
                 body: JSON.stringify(botPayload),
               });
               console.log("[callback] Bot webhook response:", res.status);

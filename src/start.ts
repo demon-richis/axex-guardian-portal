@@ -2,6 +2,12 @@ import { createStart, createCsrfMiddleware, createMiddleware } from "@tanstack/r
 
 import { renderErrorPage } from "./lib/error-page";
 
+if (process.env["BOT_WEBHOOK_URL"]) {
+  console.log("[portal] Bot verification callback configured");
+} else {
+  console.warn("[portal] BOT_WEBHOOK_URL is not configured");
+}
+
 const errorMiddleware = createMiddleware().server(async ({ next }) => {
   try {
     return await next();

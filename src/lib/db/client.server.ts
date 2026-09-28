@@ -31,11 +31,18 @@ export async function checkIp(
     const key = process.env["PROXYCHECK_API_KEY"];
     const url = `https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&asn=1${key ? `&key=${key}` : ""}`;
     const res = await fetch(url);
-    if (!res.ok) return { isVPN: false, type: null, ip };
+    if (!res.ok) {
+      console.error("[check-ip] Proxy lookup returned status:", res.status);
+      return { isVPN: false, type: null, ip };
+    }
     const json = (await res.json()) as Record<string, { proxy?: string; type?: string } | string>;
     const entry = json[ip];
     if (!entry || typeof entry === "string") return { isVPN: false, type: null, ip };
-    return { isVPN: entry.proxy === "yes", type: entry.type ?? null, ip };
+    const proxy = String(entry.proxy ?? "").toLowerCase();
+    const type = entry.type ? String(entry.type) : null;
+    const normalizedType = type?.toLowerCase() ?? "";
+    const isVPN = proxy === "yes" || normalizedType === "vpn" || normalizedType.includes("proxy");
+    return { isVPN, type, ip };
   } catch (error) {
     console.error("[check-ip] Proxy lookup failed:", error);
     return { isVPN: false, type: null, ip };

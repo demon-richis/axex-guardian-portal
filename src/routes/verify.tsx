@@ -6,7 +6,7 @@ import { z } from "zod";
 export const Route = createFileRoute("/verify")({
   validateSearch: z.object({
     token: z.string().optional(),
-    auth: z.string().optional(),
+    auth: z.coerce.string().optional(),
     error: z.string().optional(),
     demo: z.coerce.string().optional(),
   }),
@@ -94,6 +94,24 @@ const fade = {
   transition: { duration: 0.3 },
 };
 
+function readAttemptCount(key: string): number {
+  try {
+    const stored = Number(window.localStorage.getItem(key) ?? 0);
+    return Number.isFinite(stored) ? stored : 0;
+  } catch (error) {
+    console.error("[verify] Could not read local attempt count:", error);
+    return 0;
+  }
+}
+
+function writeAttemptCount(key: string, attempts: number): void {
+  try {
+    window.localStorage.setItem(key, String(attempts));
+  } catch (error) {
+    console.error("[verify] Could not save local attempt count:", error);
+  }
+}
+
 function VerifyPage() {
   const { token = "", auth, error, demo } = Route.useSearch();
   const demoMode = demo === "1";
@@ -108,36 +126,59 @@ function VerifyPage() {
   const attemptKey = `axex:verify-attempts:${effectiveToken}`;
 
   useEffect(() => {
-    if (!token) return;
-    const stored = Number(window.localStorage.getItem(attemptKey) ?? 0);
-    setAttempts(Number.isFinite(stored) ? stored : 0);
-  }, [attemptKey, token]);
+    if (!token && !demoMode) return;
+    const stored = readAttemptCount(attemptKey);
+    console.log("[verify] Loaded local attempt count:", stored);
+    setAttempts(stored);
+  }, [attemptKey, demoMode, token]);
 
-  const fail = (k: ErrorKind) => {
+  useEffect(() => {
+    console.log("[verify] Phase:", phase, { busy, hasUser: Boolean(info?.discordUser) });
+  }, [busy, info?.discordUser, phase]);
+
+  const fail = useCallback((k: ErrorKind) => {
+    console.error("[verify] Transitioning to error:", k);
     setErrorKind(k);
     setPhase("error");
-  };
+  }, []);
 
-  const runIpCheck = useCallback(async () => {
+  const runIpCheck = useCallback(async (signal?: AbortSignal) => {
+    console.log("[verify] Step 2: Starting IP check");
     setBusy(true);
     try {
-      const r = (await (await fetch("/api/check-ip", { cache: "no-store" })).json()) as {
-        isVPN: boolean;
-      };
-      setPhase(r.isVPN ? "vpn" : "captcha");
-    } catch {
+      const response = await fetch("/api/check-ip", {
+        cache: "no-store",
+        ...(signal ? { signal } : {}),
+      });
+      console.log("[verify] IP check response:", response.status);
+      if (!response.ok) throw new Error(`IP check failed with status ${response.status}`);
+      const result = (await response.json()) as { isVPN?: boolean };
+      console.log("[verify] IP check completed:", { isVPN: result.isVPN === true });
+      if (signal?.aborted) return;
+      setPhase(result.isVPN ? "vpn" : "captcha");
+    } catch (error) {
+      if (signal?.aborted) return;
+      console.error("[verify] IP check failed; continuing to captcha:", error);
       setPhase("captcha");
     } finally {
-      setBusy(false);
+      if (!signal?.aborted) setBusy(false);
     }
   }, []);
 
   const startDemo = useCallback(() => {
+    console.log("[verify] Demo started; moving to Step 2");
     setPhase("captcha");
   }, []);
 
   useEffect(() => {
+    console.log("[verify] Route initialized:", {
+      hasToken: Boolean(token),
+      authCompleted: auth === "1",
+      hasError: Boolean(error),
+      demoMode,
+    });
     if (demoMode) {
+      console.log("[verify] Demo mode: loading sample identity");
       setInfo({
         guildName: "Axex Demo Server",
         guildMemberCount: 1284,
@@ -148,35 +189,65 @@ function VerifyPage() {
           createdAt: "2018-01-01T00:00:00.000Z",
         },
       });
-      if (Number(window.localStorage.getItem(attemptKey) ?? 0) >= 3) return fail("lockout");
+      if (readAttemptCount(attemptKey) >= 3) return fail("lockout");
+      console.log("[verify] Demo identity loaded; showing Step 1");
       setPhase("auth");
       return;
     }
     if (!token) return fail("invalid");
+    const controller = new AbortController();
+    let active = true;
     (async () => {
       try {
+        console.log("[verify] Validating verification token");
         const res = await fetch(`/api/verify/${encodeURIComponent(token)}`);
+        console.log("[verify] Token validation response:", res.status);
+        if (!res.ok) throw new Error(`Token validation failed with status ${res.status}`);
         const data = (await res.json()) as TokenInfo & { valid: boolean; reason?: string };
+        console.log("[verify] Token validation result:", {
+          valid: data.valid,
+          reason: data.reason,
+          hasDiscordIdentity: Boolean(data.discordUser),
+        });
+        if (!active) return;
         if (!data.valid)
           return fail(
             data.reason === "used" ? "used" : data.reason === "error" ? "generic" : "invalid",
           );
         setInfo(data);
-        if (Number(window.localStorage.getItem(attemptKey) ?? 0) >= 3) return fail("lockout");
+        if (readAttemptCount(attemptKey) >= 3) return fail("lockout");
         if (error) return fail("generic");
         if (auth && data.discordUser) {
-          window.history.replaceState(null, "", `/verify?token=${encodeURIComponent(token)}`);
-          await runIpCheck();
-        } else setPhase("auth");
-      } catch {
+          console.log("[verify] OAuth complete: identity found; moving from Step 1 to Step 2");
+          console.log("[verify] Keeping TanStack-managed URL state intact");
+          await runIpCheck(controller.signal);
+        } else if (auth) {
+          console.error("[verify] OAuth completed but token has no stored Discord identity");
+          fail("generic");
+        } else {
+          console.log("[verify] OAuth not complete; showing Step 1");
+          setPhase("auth");
+        }
+      } catch (error) {
+        if (!active) return;
+        console.error("[verify] Initialization failed:", error);
         fail("generic");
       }
     })();
-  }, [attemptKey, token, auth, error, demoMode, runIpCheck]);
+    return () => {
+      active = false;
+      controller.abort();
+      console.log("[verify] Initialization cancelled or component unmounted");
+    };
+  }, [attemptKey, token, auth, error, demoMode, fail, runIpCheck]);
 
   const submitAttempt = useCallback(
     async (passed: boolean, clickMs: number, timeout = false) => {
-      if (demoMode) return { success: true, passed };
+      console.log("[verify] Submitting verification result:", { passed, timeout });
+      if (demoMode) {
+        console.log("[verify] Demo result accepted locally");
+        return { success: true, passed };
+      }
       const u = info?.discordUser;
       const response = await fetch("/api/callback", {
         method: "POST",
@@ -194,8 +265,16 @@ function VerifyPage() {
           clickMs,
           timeout,
         }),
-      }).catch(() => null);
-      return (await response?.json().catch(() => null)) as {
+      }).catch((requestError: unknown) => {
+        console.error("[verify] Callback request failed:", requestError);
+        return null;
+      });
+      if (!response) return null;
+      console.log("[verify] Callback response:", response.status);
+      return (await response.json().catch((parseError: unknown) => {
+        console.error("[verify] Could not parse callback response:", parseError);
+        return null;
+      })) as {
         success?: boolean;
         passed?: boolean;
         attempts?: number;
@@ -206,25 +285,32 @@ function VerifyPage() {
 
   const complete = useCallback(
     async (clickMs: number) => {
+      console.log("[verify] Step 2 passed; submitting completion");
       const result = await submitAttempt(true, clickMs);
-      if (result?.success && result.passed) setPhase("done");
-      else fail(result?.attempts && result.attempts >= 3 ? "lockout" : "generic");
+      if (result?.success && result.passed) {
+        console.log("[verify] Completion accepted; moving to Step 3");
+        setPhase("done");
+      } else {
+        console.error("[verify] Completion rejected");
+        fail(result?.attempts && result.attempts >= 3 ? "lockout" : "generic");
+      }
     },
-    [submitAttempt],
+    [fail, submitAttempt],
   );
 
   const failedAttempt = useCallback(
     async (clickMs: number, timeout = false) => {
       const nextAttempts = attempts + (timeout ? 0 : 1);
+      console.log("[verify] Step 2 failed:", { timeout, nextAttempts });
       if (!timeout) {
-        window.localStorage.setItem(attemptKey, String(nextAttempts));
+        writeAttemptCount(attemptKey, nextAttempts);
         setAttempts(nextAttempts);
       }
       const result = await submitAttempt(false, clickMs, timeout);
       if (nextAttempts >= 3 || (result?.attempts ?? 0) >= 3) fail("lockout");
       else if (timeout) fail("timeout");
     },
-    [attemptKey, attempts, submitAttempt],
+    [attemptKey, attempts, fail, submitAttempt],
   );
 
   const step =

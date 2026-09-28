@@ -10,18 +10,18 @@ const Body = z.object({
   expiresAt: z.string().datetime({ offset: true }),
 });
 
-export const Route = createFileRoute("/api/guild/token")({
+export const Route = createFileRoute("/api/bot/token")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        console.log("[guild/token] Request received");
+        console.log("[bot/token] Request received");
         const { validateApiKey } = await import("@/lib/api-auth.server");
         const authError = validateApiKey(request);
         if (authError) return authError;
 
         const parsed = Body.safeParse(await request.json().catch(() => null));
         if (!parsed.success) {
-          console.error("[guild/token] Invalid request body");
+          console.error("[bot/token] Invalid request body");
           return Response.json({ error: "Missing or invalid required fields" }, { status: 400 });
         }
 
@@ -29,7 +29,7 @@ export const Route = createFileRoute("/api/guild/token")({
           const { verifyTokens } = await import("@/lib/db/schema");
           const { getDb } = await import("@/lib/db/client.server");
           const { token, userId, guildId, guildName, guildMemberCount, expiresAt } = parsed.data;
-          console.log("[guild/token] Received token:", token);
+          console.log("[bot/token] Received token:", token);
 
           await getDb()
             .insert(verifyTokens)
@@ -44,10 +44,10 @@ export const Route = createFileRoute("/api/guild/token")({
             })
             .onConflictDoNothing();
 
-          console.log("[guild/token] Saved successfully");
+          console.log("[bot/token] Saved successfully");
           return Response.json({ success: true, token });
         } catch (error) {
-          console.error("[guild/token] Error:", error);
+          console.error("[bot/token] Error:", error);
           return Response.json({ error: "Internal server error" }, { status: 500 });
         }
       },

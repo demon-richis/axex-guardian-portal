@@ -98,9 +98,36 @@
   --surface-border-2: rgba(255, 255, 255, 0.07);
 }
 
-.check-path { stroke-dasharray: 40; stroke-dashoffset: 40; animation: draw 0.8s ease forwards 0.15s; }
-@keyframes draw { to { stroke-dashoffset: 0; } }
-@keyframes redglow { 0%,100% { box-shadow: 0 0 0 rgba(220,38,38,0); } 50% { box-shadow: 0 0 24px rgba(220,38,38,0.25); } }
+.check-path {
+  stroke-dasharray: 40;
+  stroke-dashoffset: 40;
+  animation: draw 0.8s ease forwards 0.15s;
+}
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes redglow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 rgba(220, 38, 38, 0);
+  }
+  50% {
+    box-shadow: 0 0 24px rgba(220, 38, 38, 0.25);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
+}
 
 @layer base {
   * {
@@ -108,8 +135,13 @@
   }
 
   body {
-    font-family: 'Inter', system-ui, sans-serif;
+    font-family: "Inter", system-ui, sans-serif;
     background-color: var(--color-background);
     color: var(--color-foreground);
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--green);
+    outline-offset: 3px;
   }
 }

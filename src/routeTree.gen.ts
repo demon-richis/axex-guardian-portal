@@ -10,10 +10,13 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as PrivacyRouteImport } from './routes/privacy'
+import { Route as SupportRouteImport } from './routes/support'
 import { Route as VerifyRouteImport } from './routes/verify'
 import { Route as ApiCallbackRouteImport } from './routes/api/callback'
 import { Route as ApiCheckIpRouteImport } from './routes/api/check-ip'
 import { Route as ApiFlagRouteImport } from './routes/api/flag'
+import { Route as ApiTelemetryRouteImport } from './routes/api/telemetry'
 import { Route as ApiAuditGuildIdRouteImport } from './routes/api/audit.$guildId'
 import { Route as ApiAuthCallbackRouteImport } from './routes/api/auth.callback'
 import { Route as ApiAuthDiscordRouteImport } from './routes/api/auth.discord'
@@ -27,6 +30,16 @@ import { Route as ApiVerifyPendingRouteImport } from './routes/api/verify.pendin
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PrivacyRoute = PrivacyRouteImport.update({
+  id: '/privacy',
+  path: '/privacy',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SupportRoute = SupportRouteImport.update({
+  id: '/support',
+  path: '/support',
   getParentRoute: () => rootRouteImport,
 } as any)
 const VerifyRoute = VerifyRouteImport.update({
@@ -47,6 +60,11 @@ const ApiCheckIpRoute = ApiCheckIpRouteImport.update({
 const ApiFlagRoute = ApiFlagRouteImport.update({
   id: '/api/flag',
   path: '/api/flag',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiTelemetryRoute = ApiTelemetryRouteImport.update({
+  id: '/api/telemetry',
+  path: '/api/telemetry',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiAuditGuildIdRoute = ApiAuditGuildIdRouteImport.update({
@@ -97,10 +115,13 @@ const ApiVerifyPendingRoute = ApiVerifyPendingRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
+  '/support': typeof SupportRoute
   '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
   '/api/check-ip': typeof ApiCheckIpRoute
   '/api/flag': typeof ApiFlagRoute
+  '/api/telemetry': typeof ApiTelemetryRoute
   '/api/audit/$guildId': typeof ApiAuditGuildIdRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
   '/api/auth/discord': typeof ApiAuthDiscordRoute
@@ -113,10 +134,13 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
+  '/support': typeof SupportRoute
   '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
   '/api/check-ip': typeof ApiCheckIpRoute
   '/api/flag': typeof ApiFlagRoute
+  '/api/telemetry': typeof ApiTelemetryRoute
   '/api/audit/$guildId': typeof ApiAuditGuildIdRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
   '/api/auth/discord': typeof ApiAuthDiscordRoute
@@ -130,10 +154,13 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/privacy': typeof PrivacyRoute
+  '/support': typeof SupportRoute
   '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
   '/api/check-ip': typeof ApiCheckIpRoute
   '/api/flag': typeof ApiFlagRoute
+  '/api/telemetry': typeof ApiTelemetryRoute
   '/api/audit/$guildId': typeof ApiAuditGuildIdRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
   '/api/auth/discord': typeof ApiAuthDiscordRoute
@@ -148,10 +175,13 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/privacy'
+    | '/support'
     | '/verify'
     | '/api/callback'
     | '/api/check-ip'
     | '/api/flag'
+    | '/api/telemetry'
     | '/api/audit/$guildId'
     | '/api/auth/callback'
     | '/api/auth/discord'
@@ -164,10 +194,13 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/privacy'
+    | '/support'
     | '/verify'
     | '/api/callback'
     | '/api/check-ip'
     | '/api/flag'
+    | '/api/telemetry'
     | '/api/audit/$guildId'
     | '/api/auth/callback'
     | '/api/auth/discord'
@@ -180,10 +213,13 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/privacy'
+    | '/support'
     | '/verify'
     | '/api/callback'
     | '/api/check-ip'
     | '/api/flag'
+    | '/api/telemetry'
     | '/api/audit/$guildId'
     | '/api/auth/callback'
     | '/api/auth/discord'
@@ -197,10 +233,13 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  PrivacyRoute: typeof PrivacyRoute
+  SupportRoute: typeof SupportRoute
   VerifyRoute: typeof VerifyRoute
   ApiCallbackRoute: typeof ApiCallbackRoute
   ApiCheckIpRoute: typeof ApiCheckIpRoute
   ApiFlagRoute: typeof ApiFlagRoute
+  ApiTelemetryRoute: typeof ApiTelemetryRoute
   ApiAuditGuildIdRoute: typeof ApiAuditGuildIdRoute
   ApiAuthCallbackRoute: typeof ApiAuthCallbackRoute
   ApiAuthDiscordRoute: typeof ApiAuthDiscordRoute
@@ -219,6 +258,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/privacy': {
+      id: '/privacy'
+      path: '/privacy'
+      fullPath: '/privacy'
+      preLoaderRoute: typeof PrivacyRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/support': {
+      id: '/support'
+      path: '/support'
+      fullPath: '/support'
+      preLoaderRoute: typeof SupportRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/verify': {
@@ -247,6 +300,13 @@ declare module '@tanstack/react-router' {
       path: '/api/flag'
       fullPath: '/api/flag'
       preLoaderRoute: typeof ApiFlagRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/telemetry': {
+      id: '/api/telemetry'
+      path: '/api/telemetry'
+      fullPath: '/api/telemetry'
+      preLoaderRoute: typeof ApiTelemetryRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/audit/$guildId': {
@@ -317,10 +377,13 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  PrivacyRoute: PrivacyRoute,
+  SupportRoute: SupportRoute,
   VerifyRoute: VerifyRoute,
   ApiCallbackRoute: ApiCallbackRoute,
   ApiCheckIpRoute: ApiCheckIpRoute,
   ApiFlagRoute: ApiFlagRoute,
+  ApiTelemetryRoute: ApiTelemetryRoute,
   ApiAuditGuildIdRoute: ApiAuditGuildIdRoute,
   ApiAuthCallbackRoute: ApiAuthCallbackRoute,
   ApiAuthDiscordRoute: ApiAuthDiscordRoute,

@@ -75,17 +75,57 @@ type TokenInfo = {
   guildName: string;
   guildMemberCount: number;
   discordUser: { id: string; username: string; avatar: string | null; createdAt: string } | null;
+  expiresAt?: string;
+  status?: string;
+  referenceId?: string | null;
+  botAcknowledged?: boolean;
+  botError?: string | null;
 };
-type ErrorKind = "invalid" | "used" | "timeout" | "lockout" | "generic";
-type Phase = "loading" | "auth" | "vpn" | "captcha" | "done" | "error";
+type ErrorKind =
+  "invalid" | "used" | "timeout" | "lockout" | "auth" | "network" | "bot" | "generic";
+type Phase = "loading" | "auth" | "vpn" | "captcha" | "pending" | "done" | "error";
 
 const ERRORS: Record<ErrorKind, [string, string]> = {
   invalid: ["Invalid Link", "This verification link is invalid or has expired."],
   used: ["Already Verified", "This link has already been used."],
   timeout: ["Time Expired", "You did not complete verification in time. Contact server staff."],
   lockout: ["Verification Locked", "Too many failed attempts — contact server staff"],
+  auth: [
+    "Discord authorization cancelled",
+    "No result was submitted. You can try authorizing again.",
+  ],
+  network: [
+    "Security check unavailable",
+    "We could not complete the network check. Try again in a moment; verification will not continue until it succeeds.",
+  ],
+  bot: [
+    "Discord update is taking longer than usual",
+    "Your verification was accepted, but Discord has not confirmed the role update yet. Contact a moderator with your reference code if the role does not appear shortly.",
+  ],
   generic: ["Something went wrong", "Please try again or contact server staff."],
 };
+
+function track(token: string, event: Parameters<typeof telemetryEvent>[1]): void {
+  if (!token || typeof navigator === "undefined") return;
+  void telemetryEvent(token, event);
+}
+
+async function telemetryEvent(token: string, event: string): Promise<void> {
+  try {
+    await fetch("/api/telemetry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        token,
+        event,
+        device: window.matchMedia("(max-width: 640px)").matches ? "mobile" : "desktop",
+      }),
+      keepalive: true,
+    });
+  } catch {
+    // Telemetry must never interrupt verification.
+  }
+}
 
 const fade = {
   initial: { opacity: 0, y: 10 },
@@ -121,6 +161,7 @@ function VerifyPage() {
   const [info, setInfo] = useState<TokenInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [attempts, setAttempts] = useState(0);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [question] = useState(() => QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)]!);
 
   const attemptKey = `axex:verify-attempts:${effectiveToken}`;
@@ -133,6 +174,17 @@ function VerifyPage() {
   }, [attemptKey, demoMode, token]);
 
   useEffect(() => {
+    if (!info?.expiresAt) return;
+    const tick = () =>
+      setSecondsLeft(
+        Math.max(0, Math.ceil((new Date(info.expiresAt!).getTime() - Date.now()) / 1000)),
+      );
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [info?.expiresAt]);
+
+  useEffect(() => {
     console.log("[verify] Phase:", phase, { busy, hasUser: Boolean(info?.discordUser) });
   }, [busy, info?.discordUser, phase]);
 
@@ -142,28 +194,48 @@ function VerifyPage() {
     setPhase("error");
   }, []);
 
-  const runIpCheck = useCallback(async (signal?: AbortSignal) => {
-    console.log("[verify] Step 2: Starting IP check");
-    setBusy(true);
-    try {
-      const response = await fetch("/api/check-ip", {
-        cache: "no-store",
-        ...(signal ? { signal } : {}),
-      });
-      console.log("[verify] IP check response:", response.status);
-      if (!response.ok) throw new Error(`IP check failed with status ${response.status}`);
-      const result = (await response.json()) as { isVPN?: boolean };
-      console.log("[verify] IP check completed:", { isVPN: result.isVPN === true });
-      if (signal?.aborted) return;
-      setPhase(result.isVPN ? "vpn" : "captcha");
-    } catch (error) {
-      if (signal?.aborted) return;
-      console.error("[verify] IP check failed; continuing to captcha:", error);
-      setPhase("captcha");
-    } finally {
-      if (!signal?.aborted) setBusy(false);
-    }
-  }, []);
+  const runIpCheck = useCallback(
+    async (signal?: AbortSignal) => {
+      console.log("[verify] Step 2: Starting IP check");
+      setBusy(true);
+      try {
+        const response = await fetch("/api/check-ip", {
+          cache: "no-store",
+          ...(signal ? { signal } : {}),
+        });
+        console.log("[verify] IP check response:", response.status);
+        if (!response.ok) throw new Error(`IP check failed with status ${response.status}`);
+        const result = (await response.json()) as {
+          status?: string;
+          isVPN?: boolean;
+          type?: string | null;
+        };
+        console.log("[verify] IP check completed:", {
+          status: result.status,
+          isVPN: result.isVPN === true,
+        });
+        if (signal?.aborted) return;
+        if (result.status === "blocked" || result.isVPN) {
+          track(token, "network_blocked");
+          setPhase("vpn");
+        } else if (result.status === "clear") {
+          track(token, "network_clear");
+          setPhase("captcha");
+        } else {
+          track(token, "network_unavailable");
+          fail("network");
+        }
+      } catch (error) {
+        if (signal?.aborted) return;
+        console.error("[verify] IP check failed; stopping verification:", error);
+        track(token, "network_unavailable");
+        fail("network");
+      } finally {
+        if (!signal?.aborted) setBusy(false);
+      }
+    },
+    [fail, token],
+  );
 
   const startDemo = useCallback(() => {
     console.log("[verify] Demo started; moving to Step 2");
@@ -177,6 +249,7 @@ function VerifyPage() {
       hasError: Boolean(error),
       demoMode,
     });
+    track(token, "page_opened");
     if (demoMode) {
       console.log("[verify] Demo mode: loading sample identity");
       setInfo({
@@ -216,14 +289,14 @@ function VerifyPage() {
           );
         setInfo(data);
         if (readAttemptCount(attemptKey) >= 3) return fail("lockout");
-        if (error) return fail("generic");
+        if (error) return fail(error === "auth" ? "auth" : "generic");
         if (auth && data.discordUser) {
           console.log("[verify] OAuth complete: identity found; moving from Step 1 to Step 2");
           console.log("[verify] Keeping TanStack-managed URL state intact");
           await runIpCheck(controller.signal);
         } else if (auth) {
           console.error("[verify] OAuth completed but token has no stored Discord identity");
-          fail("generic");
+          fail(error === "auth" ? "auth" : "generic");
         } else {
           console.log("[verify] OAuth not complete; showing Step 1");
           setPhase("auth");
@@ -271,6 +344,7 @@ function VerifyPage() {
       });
       if (!response) return null;
       console.log("[verify] Callback response:", response.status);
+      track(token, response.ok ? "callback_sent" : "callback_failed");
       return (await response.json().catch((parseError: unknown) => {
         console.error("[verify] Could not parse callback response:", parseError);
         return null;
@@ -278,6 +352,9 @@ function VerifyPage() {
         success?: boolean;
         passed?: boolean;
         attempts?: number;
+        status?: string;
+        referenceId?: string | null;
+        error?: string;
       } | null;
     },
     [demoMode, info, token],
@@ -289,13 +366,45 @@ function VerifyPage() {
       const result = await submitAttempt(true, clickMs);
       if (result?.success && result.passed) {
         console.log("[verify] Completion accepted; moving to Step 3");
-        setPhase("done");
+        track(token, "captcha_passed");
+        if (result.status === "completed") {
+          track(token, "verification_completed");
+          setPhase("done");
+        } else {
+          setPhase("pending");
+          let completed = false;
+          for (let i = 0; i < 8; i += 1) {
+            await new Promise((resolve) => window.setTimeout(resolve, 1000));
+            const statusResponse = await fetch(`/api/verify/${encodeURIComponent(token)}`, {
+              cache: "no-store",
+            });
+            const status = (await statusResponse.json()) as TokenInfo & { valid?: boolean };
+            if (status.status === "completed") {
+              setInfo((current) => (current ? { ...current, ...status } : current));
+              track(token, "verification_completed");
+              setPhase("done");
+              completed = true;
+              break;
+            }
+          }
+          if (!completed) fail("bot");
+        }
       } else {
         console.error("[verify] Completion rejected");
-        fail(result?.attempts && result.attempts >= 3 ? "lockout" : "generic");
+        track(
+          token,
+          result?.error === "network_check_unavailable" ? "network_unavailable" : "callback_failed",
+        );
+        fail(
+          result?.error === "network_check_unavailable"
+            ? "network"
+            : result?.attempts && result.attempts >= 3
+              ? "lockout"
+              : "generic",
+        );
       }
     },
-    [fail, submitAttempt],
+    [fail, submitAttempt, token],
   );
 
   const failedAttempt = useCallback(
@@ -307,14 +416,19 @@ function VerifyPage() {
         setAttempts(nextAttempts);
       }
       const result = await submitAttempt(false, clickMs, timeout);
+      track(token, timeout ? "verification_error" : "captcha_failed");
       if (nextAttempts >= 3 || (result?.attempts ?? 0) >= 3) fail("lockout");
       else if (timeout) fail("timeout");
     },
-    [attemptKey, attempts, fail, submitAttempt],
+    [attemptKey, attempts, fail, submitAttempt, token],
   );
 
   const step =
-    phase === "auth" || phase === "vpn" || phase === "loading" ? 0 : phase === "captcha" ? 1 : 2;
+    phase === "auth" || phase === "vpn" || phase === "loading"
+      ? 0
+      : phase === "captcha" || phase === "pending"
+        ? 1
+        : 2;
   const user = info?.discordUser;
   const ageDays = user
     ? Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000)
@@ -326,13 +440,23 @@ function VerifyPage() {
       <div className="pointer-events-none absolute -bottom-40 -right-40 h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle,var(--green)_0%,transparent_70%)] opacity-[0.06]" />
 
       <CardShell phase={phase}>
-        {phase === "loading" || busy ? <Spinner /> : null}
+        {phase === "loading" || busy ? (
+          <Spinner
+            label={
+              phase === "loading" ? "Loading your secure verification" : "Checking your connection"
+            }
+          />
+        ) : null}
         {phase !== "error" && phase !== "loading" && <Steps step={step} />}
 
         <AnimatePresence mode="wait">
           {phase === "error" && (
             <motion.div key="err" {...fade}>
-              <ErrorAlert title={ERRORS[errorKind][0]} desc={ERRORS[errorKind][1]} />
+              <ErrorAlert
+                title={ERRORS[errorKind][0]}
+                desc={ERRORS[errorKind][1]}
+                onRetry={errorKind === "network" ? runIpCheck : undefined}
+              />
             </motion.div>
           )}
 
@@ -353,8 +477,8 @@ function VerifyPage() {
                           VPN / Proxy Detected
                         </p>
                         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                          We detected a VPN or proxy on your connection. Please disable it
-                          completely and try again.
+                          We detected a VPN or proxy on your connection. Disable it completely, then
+                          retry. Your link remains valid until it expires.
                         </p>
                       </div>
                     </div>
@@ -395,12 +519,21 @@ function VerifyPage() {
                 <PrimaryButton onClick={startDemo}>Start Demo Verification</PrimaryButton>
               ) : (
                 <PrimaryButton
-                  onClick={() =>
+                  onClick={() => (
+                    track(token, "oauth_started"),
                     (window.location.href = `/api/auth/discord?token=${encodeURIComponent(token)}`)
-                  }
+                  )}
                 >
                   <DiscordIcon /> Continue with Discord
                 </PrimaryButton>
+              )}
+              {secondsLeft !== null && (
+                <p className="text-center text-[11px] text-muted-foreground">
+                  Link expires in{" "}
+                  <strong className={secondsLeft < 60 ? "text-[var(--amber)]" : "text-foreground"}>
+                    {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, "0")}
+                  </strong>
+                </p>
               )}
             </motion.div>
           )}
@@ -416,6 +549,23 @@ function VerifyPage() {
                 onFail={failedAttempt}
                 onTimeout={(clickMs) => failedAttempt(clickMs, true)}
               />
+            </motion.div>
+          )}
+
+          {phase === "pending" && info && (
+            <motion.div key="pending" {...fade} className="space-y-4 text-center">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-[var(--green)]/30 bg-[var(--green-soft)]">
+                <span className="h-6 w-6 animate-spin rounded-full border-2 border-[var(--green)]/20 border-t-[var(--green)]" />
+              </div>
+              <h2 className="text-xl font-bold text-foreground">Verification accepted</h2>
+              <p className="text-sm leading-6 text-muted-foreground">
+                We are notifying Discord now. This usually takes a few seconds. Keep this tab open.
+              </p>
+              {info.referenceId && (
+                <p className="text-xs text-muted-foreground">
+                  Reference <strong className="text-foreground">{info.referenceId}</strong>
+                </p>
+              )}
             </motion.div>
           )}
 
@@ -457,14 +607,39 @@ function VerifyPage() {
               <p className="mt-1 text-xs text-[var(--faint)]">
                 Access has been granted to your account.
               </p>
+              {info.referenceId && (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Reference: <strong className="text-foreground">{info.referenceId}</strong>
+                </p>
+              )}
+              <div className="mt-5 flex w-full gap-2">
+                <a
+                  href="https://discord.com/app"
+                  className="flex min-h-11 flex-1 items-center justify-center rounded-xl bg-[var(--green)]/20 px-3 text-sm font-semibold text-foreground hover:bg-[var(--green)]/30"
+                >
+                  Open Discord
+                </a>
+                <a
+                  href="/support"
+                  className="flex min-h-11 items-center justify-center rounded-xl border border-border px-3 text-sm font-semibold text-muted-foreground hover:bg-accent"
+                >
+                  Support
+                </a>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
       </CardShell>
 
-      <p className="relative mt-6 text-center text-[11px] text-[var(--faint)]">
-        Secured by Axex • axex.gg • Your IP is being verified
-      </p>
+      <div className="relative mt-6 flex flex-wrap justify-center gap-x-3 gap-y-1 text-center text-[11px] text-[var(--faint)]">
+        <span>Secured by Axex • Your IP is checked privately</span>
+        <a href="/privacy" className="underline underline-offset-2 hover:text-foreground">
+          Privacy
+        </a>
+        <a href="/support" className="underline underline-offset-2 hover:text-foreground">
+          Having trouble?
+        </a>
+      </div>
     </main>
   );
 }
@@ -481,10 +656,17 @@ function CardShell({ children, phase }: { children: React.ReactNode; phase: Phas
   );
 }
 
-function Spinner() {
+function Spinner({ label }: { label: string }) {
   return (
-    <div className="absolute inset-0 z-20 flex items-center justify-center bg-card/80 backdrop-blur-sm">
-      <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--red)]/20 border-t-[var(--green)]" />
+    <div
+      className="absolute inset-0 z-20 flex items-center justify-center bg-card/80 backdrop-blur-sm"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex flex-col items-center gap-3">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--red)]/20 border-t-[var(--green)]" />
+        <span className="text-xs text-muted-foreground">{label}</span>
+      </div>
     </div>
   );
 }
@@ -517,7 +699,7 @@ function Steps({ step }: { step: number }) {
           </div>
         ))}
       </div>
-      <p className="mt-2 text-[11px] text-muted-foreground">
+      <p className="mt-2 text-[11px] text-muted-foreground" aria-live="polite">
         Step {step + 1} of 3 — {["Discord authentication", "Human verification", "Complete"][step]}
       </p>
     </div>
@@ -546,6 +728,13 @@ function Header({ info }: { info: TokenInfo }) {
             {info.guildMemberCount.toLocaleString()} members • Verification required
           </p>
         </div>
+      </div>
+      <div className="rounded-xl border border-[var(--surface-border)] bg-[var(--surface)] p-3 text-xs leading-5 text-muted-foreground">
+        <p className="font-semibold text-foreground">Verification takes about 30 seconds</p>
+        <p className="mt-1">
+          We confirm Discord account ownership, check the network for VPNs or proxies, and ask one
+          short human question. Discord handles sign-in; Axex never sees your password.
+        </p>
       </div>
     </div>
   );
@@ -588,9 +777,10 @@ function PrimaryButton({
 }) {
   return (
     <button
+      type="button"
       onClick={onClick}
       disabled={disabled}
-      className="relative flex w-full items-center justify-center gap-2 overflow-hidden rounded-xl border border-[var(--red)]/25 bg-gradient-to-r from-[#450a0a] to-[#1a2e00] px-4 py-3 text-sm font-semibold text-foreground transition-all duration-200 hover:brightness-125 disabled:opacity-60"
+      className="relative flex min-h-11 w-full items-center justify-center gap-2 overflow-hidden rounded-xl border border-[var(--red)]/25 bg-gradient-to-r from-[#450a0a] to-[#1a2e00] px-4 py-3 text-sm font-semibold text-foreground transition-all duration-200 hover:brightness-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green)] disabled:opacity-60"
     >
       {children}
       <span className="absolute inset-x-6 bottom-0 h-px bg-[var(--green)]/30" />
@@ -718,10 +908,12 @@ function Captcha({
             return (
               <motion.button
                 key={o}
+                type="button"
                 onClick={() => pick(o)}
                 animate={f?.ok ? { scale: [1, 1.05, 1], opacity: [1, 1, 0.4] } : {}}
                 transition={{ duration: 0.6 }}
-                className={`rounded-lg border px-3 py-2.5 text-sm text-foreground transition-colors duration-200 ${
+                aria-label={`Answer: ${o}`}
+                className={`min-h-11 rounded-lg border px-3 py-2.5 text-sm text-foreground transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green)] ${
                   f
                     ? f.ok
                       ? "border-[var(--green)] bg-[var(--green)]/20"
@@ -740,7 +932,15 @@ function Captcha({
   );
 }
 
-function ErrorAlert({ title, desc }: { title: string; desc: string }) {
+function ErrorAlert({
+  title,
+  desc,
+  onRetry,
+}: {
+  title: string;
+  desc: string;
+  onRetry?: (() => void) | undefined;
+}) {
   return (
     <div className="flex flex-col items-center py-4 text-center">
       <div className="flex h-14 w-14 items-center justify-center rounded-full border border-[var(--red)]/30 bg-[var(--red-soft)]">
@@ -761,6 +961,21 @@ function ErrorAlert({ title, desc }: { title: string; desc: string }) {
       >
         <p className="text-sm font-semibold text-foreground">{title}</p>
         <p className="mt-1 text-xs text-muted-foreground">{desc}</p>
+        {onRetry && (
+          <button
+            type="button"
+            onClick={onRetry}
+            className="mt-4 min-h-11 rounded-lg border border-[var(--red)]/30 px-3 text-xs font-semibold text-foreground hover:bg-[var(--red-soft)]"
+          >
+            Check again
+          </button>
+        )}
+        <a
+          href="/support"
+          className="mt-3 inline-block text-xs font-semibold text-[var(--green-text)] underline underline-offset-2"
+        >
+          Having trouble?
+        </a>
       </div>
     </div>
   );

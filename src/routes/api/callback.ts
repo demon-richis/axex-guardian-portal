@@ -34,18 +34,21 @@ export const Route = createFileRoute("/api/callback")({
           console.error("[callback] Invalid request body");
           return Response.json({ success: false }, { status: 400 });
         }
-        const {
-          token,
-          discordId,
-          discordTag,
-          discordAvatar,
-          passed,
-        } = parsed.data;
+        const { token, discordId, discordTag, discordAvatar, passed } = parsed.data;
         try {
           const db = getDb();
           const row = (
             await db.select().from(verifyTokens).where(eq(verifyTokens.token, token)).limit(1)
           )[0];
+          if (row?.used && row.status === "completed") {
+            return Response.json({
+              success: true,
+              passed: true,
+              status: row.status,
+              referenceId: row.referenceId,
+              idempotent: true,
+            });
+          }
           if (!row || row.used || row.expiresAt.getTime() < Date.now() || !row.discordId) {
             console.error("[callback] Token missing, expired, used, or lacks OAuth identity");
             return Response.json({ success: false }, { status: 400 });
@@ -54,6 +57,17 @@ export const Route = createFileRoute("/api/callback")({
           const submittedIp = parsed.data.ipAddress?.trim() ?? "";
           const observedIp = serverIp || submittedIp;
           const ip = await checkIp(observedIp);
+          if (ip.status === "unavailable") {
+            console.error("[callback] Network security check unavailable; refusing verification");
+            return Response.json(
+              {
+                success: false,
+                error: "network_check_unavailable",
+                referenceId: row.referenceId,
+              },
+              { status: 503 },
+            );
+          }
           const vpnDetected = ip.isVPN || parsed.data.vpnDetected === true;
           const vpnType = ip.type ?? parsed.data.vpnType ?? null;
           const accountAgeDays = Math.floor(
@@ -147,6 +161,7 @@ export const Route = createFileRoute("/api/callback")({
             .update(verifyTokens)
             .set({
               used: finalPassed,
+              status: finalPassed ? "bot_update_pending" : vpnDetected ? "blocked" : "failed",
               attempts,
               discordTag: discordTag ?? row.discordTag ?? row.discordUsername,
               discordAvatar: discordAvatar ?? row.discordAvatar,
@@ -156,11 +171,18 @@ export const Route = createFileRoute("/api/callback")({
               flagged,
               flagReason: reason,
               completedAt: finalPassed ? new Date() : null,
+              botError: null,
             })
             .where(and(eq(verifyTokens.token, token), eq(verifyTokens.used, false)));
           const botWebhookUrl = process.env["BOT_WEBHOOK_URL"];
+          let callbackStatus: "completed" | "bot_update_pending" | "blocked" | "failed" =
+            finalPassed ? "bot_update_pending" : vpnDetected ? "blocked" : "failed";
           if (!botWebhookUrl) {
             console.error("[callback] BOT_WEBHOOK_URL is not configured");
+            await db
+              .update(verifyTokens)
+              .set({ status: callbackStatus, botError: "BOT_WEBHOOK_URL is not configured" })
+              .where(eq(verifyTokens.token, token));
           } else {
             const botPayload = {
               guildId: row.guildId,
@@ -189,9 +211,30 @@ export const Route = createFileRoute("/api/callback")({
               console.log("[callback] Bot webhook response:", res.status);
               if (!res.ok) {
                 console.error("[callback] Bot webhook returned an error status:", res.status);
+                await db
+                  .update(verifyTokens)
+                  .set({
+                    status: finalPassed ? "bot_update_pending" : vpnDetected ? "blocked" : "failed",
+                    botError: `Bot returned ${res.status}`,
+                  })
+                  .where(eq(verifyTokens.token, token));
+              } else {
+                callbackStatus = finalPassed ? "completed" : vpnDetected ? "blocked" : "failed";
+                await db
+                  .update(verifyTokens)
+                  .set({ status: callbackStatus, botAcknowledgedAt: new Date(), botError: null })
+                  .where(eq(verifyTokens.token, token));
               }
             } catch (error) {
               console.error("[callback] Bot webhook call failed:", error);
+              await db
+                .update(verifyTokens)
+                .set({
+                  status: finalPassed ? "bot_update_pending" : vpnDetected ? "blocked" : "failed",
+                  botError:
+                    error instanceof Error ? error.message.slice(0, 500) : "Bot callback failed",
+                })
+                .where(eq(verifyTokens.token, token));
             }
           }
           const severity = autoBanned ? "critical" : flagged ? "warn" : "info";
@@ -234,6 +277,8 @@ export const Route = createFileRoute("/api/callback")({
           return Response.json({
             success: true,
             passed: finalPassed,
+            status: callbackStatus,
+            referenceId: row.referenceId,
             flagged,
             autoBanned,
             attempts,

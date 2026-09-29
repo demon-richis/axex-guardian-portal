@@ -8,6 +8,13 @@
       "when": 1790441057301,
       "tag": "0000_outgoing_azazel",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1790693999454,
+      "tag": "0001_lowly_silver_samurai",
+      "breakpoints": true
     }
   ]
 }

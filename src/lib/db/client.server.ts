@@ -23,29 +23,33 @@ export function clientIp(request: Request): string {
   );
 }
 
-export async function checkIp(
-  ip: string,
-): Promise<{ isVPN: boolean; type: string | null; ip: string }> {
-  if (!ip) return { isVPN: false, type: null, ip };
+export async function checkIp(ip: string): Promise<{
+  status: "clear" | "blocked" | "unavailable";
+  isVPN: boolean;
+  type: string | null;
+  ip: string;
+}> {
+  if (!ip) return { status: "unavailable", isVPN: false, type: null, ip };
   try {
     const key = process.env["PROXYCHECK_API_KEY"];
     const url = `https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&asn=1${key ? `&key=${key}` : ""}`;
     const res = await fetch(url);
     if (!res.ok) {
       console.error("[check-ip] Proxy lookup returned status:", res.status);
-      return { isVPN: false, type: null, ip };
+      return { status: "unavailable", isVPN: false, type: null, ip };
     }
     const json = (await res.json()) as Record<string, { proxy?: string; type?: string } | string>;
     const entry = json[ip];
-    if (!entry || typeof entry === "string") return { isVPN: false, type: null, ip };
+    if (!entry || typeof entry === "string")
+      return { status: "unavailable", isVPN: false, type: null, ip };
     const proxy = String(entry.proxy ?? "").toLowerCase();
     const type = entry.type ? String(entry.type) : null;
     const normalizedType = type?.toLowerCase() ?? "";
     const isVPN = proxy === "yes" || normalizedType === "vpn" || normalizedType.includes("proxy");
-    return { isVPN, type, ip };
+    return { status: isVPN ? "blocked" : "clear", isVPN, type, ip };
   } catch (error) {
     console.error("[check-ip] Proxy lookup failed:", error);
-    return { isVPN: false, type: null, ip };
+    return { status: "unavailable", isVPN: false, type: null, ip };
   }
 }
 

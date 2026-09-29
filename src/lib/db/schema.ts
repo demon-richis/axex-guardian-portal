@@ -31,6 +31,10 @@ export const verifyTokens = pgTable("verify_tokens", {
   guildMemberCount: integer("guild_member_count").default(0),
   expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
   used: boolean("used").default(false),
+  status: text("status").default("pending").notNull(),
+  referenceId: text("reference_id"),
+  botAcknowledgedAt: timestamp("bot_acknowledged_at", { withTimezone: true }),
+  botError: text("bot_error"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   // Filled by the OAuth callback so the final result can't be forged by the browser
   discordId: text("discord_id"),

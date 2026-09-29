@@ -9,13 +9,20 @@ export const Route = createFileRoute("/api/check-ip")({
         console.log("[check-ip] Checking request IP:", ip ? "present" : "unavailable");
         try {
           const result = await checkIp(ip);
-          console.log("[check-ip] Result:", { isVPN: result.isVPN, type: result.type });
-          return Response.json(result, { headers: { "cache-control": "no-store" } });
+          console.log("[check-ip] Result:", {
+            status: result.status,
+            isVPN: result.isVPN,
+            type: result.type,
+          });
+          return Response.json(result, {
+            status: result.status === "unavailable" ? 503 : 200,
+            headers: { "cache-control": "no-store" },
+          });
         } catch (error) {
           console.error("[check-ip] Failed:", error);
           return Response.json(
-            { isVPN: false, type: null, ip },
-            { headers: { "cache-control": "no-store" } },
+            { status: "unavailable", isVPN: false, type: null, ip },
+            { status: 503, headers: { "cache-control": "no-store" } },
           );
         }
       },

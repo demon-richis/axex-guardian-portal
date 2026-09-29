@@ -21,7 +21,7 @@ export const Route = createFileRoute("/api/verify/$token")({
             console.log("[verify/token] Result:", result);
             return Response.json(result);
           }
-          if (row.used) {
+          if (row.used && !["completed", "bot_update_pending"].includes(row.status)) {
             const result = { valid: false, reason: "used" } as const;
             console.log("[verify/token] Result:", result);
             return Response.json(result);
@@ -38,7 +38,11 @@ export const Route = createFileRoute("/api/verify/$token")({
             guildName: row.guildName,
             guildMemberCount: row.guildMemberCount ?? 0,
             expiresAt: row.expiresAt.toISOString(),
-            used: false,
+            status: row.status,
+            referenceId: row.referenceId,
+            botAcknowledged: Boolean(row.botAcknowledgedAt),
+            botError: row.botError,
+            used: row.used,
             discordUser: row.discordId
               ? {
                   id: row.discordId,

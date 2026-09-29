@@ -26,9 +26,11 @@ export const Route = createFileRoute("/api/bot/token")({
         }
 
         try {
+          const crypto = await import("node:crypto");
           const { verifyTokens } = await import("@/lib/db/schema");
           const { getDb } = await import("@/lib/db/client.server");
           const { token, userId, guildId, guildName, guildMemberCount, expiresAt } = parsed.data;
+          const referenceId = `AX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
           console.log("[bot/token] Received token:", token);
 
           await getDb()
@@ -41,11 +43,13 @@ export const Route = createFileRoute("/api/bot/token")({
               guildMemberCount: guildMemberCount || 0,
               expiresAt: new Date(expiresAt),
               used: false,
+              status: "pending",
+              referenceId,
             })
             .onConflictDoNothing();
 
           console.log("[bot/token] Saved successfully");
-          return Response.json({ success: true, token });
+          return Response.json({ success: true, token, referenceId });
         } catch (error) {
           console.error("[bot/token] Error:", error);
           return Response.json({ error: "Internal server error" }, { status: 500 });

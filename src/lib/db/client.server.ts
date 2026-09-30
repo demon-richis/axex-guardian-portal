@@ -29,7 +29,15 @@ export async function checkIp(ip: string): Promise<{
   type: string | null;
   ip: string;
 }> {
-  if (!ip) return { status: "unavailable", isVPN: false, type: null, ip };
+  if (!ip) {
+    if (process.env["ALLOW_LOCALHOST_NETWORK_CHECK"] === "true") {
+      console.warn(
+        "[check-ip] No forwarded client IP; allowing explicit localhost development check",
+      );
+      return { status: "clear", isVPN: false, type: "localhost-dev", ip: "127.0.0.1" };
+    }
+    return { status: "unavailable", isVPN: false, type: null, ip };
+  }
   try {
     const key = process.env["PROXYCHECK_API_KEY"];
     const url = `https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&asn=1${key ? `&key=${key}` : ""}`;

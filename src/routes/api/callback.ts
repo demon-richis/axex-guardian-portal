@@ -15,6 +15,7 @@ const Body = z.object({
   clickMs: z.number().int().nonnegative().optional(),
   flagged: z.boolean().optional(),
   flagReason: z.string().max(500).nullable().optional(),
+  failureReason: z.enum(["WRONG_ANSWER", "TIMEOUT", "BOT_DETECTED", "VPN_BLOCKED"]).optional(),
   timeout: z.boolean().optional(),
   attempts: z.number().int().positive().optional(),
 });
@@ -26,9 +27,7 @@ export const Route = createFileRoute("/api/callback")({
         console.log("[callback] Verification result received");
         const { getDb, snowflakeToDate, checkIp, clientIp } =
           await import("@/lib/db/client.server");
-        const { auditLogs, guildConfigs, suspiciousAttempts, verifyTokens } =
-          await import("@/lib/db/schema");
-        const { postWebhook } = await import("@/lib/webhook.server");
+        const { auditLogs, suspiciousAttempts, verifyTokens } = await import("@/lib/db/schema");
         const parsed = Body.safeParse(await request.json().catch(() => null));
         if (!parsed.success) {
           console.error("[callback] Invalid request body");
@@ -52,6 +51,30 @@ export const Route = createFileRoute("/api/callback")({
           if (!row || row.used || row.expiresAt.getTime() < Date.now() || !row.discordId) {
             console.error("[callback] Token missing, expired, used, or lacks OAuth identity");
             return Response.json({ success: false }, { status: 400 });
+          }
+          if (row.status === "locked" || (row.attempts ?? 0) >= 3) {
+            return Response.json(
+              {
+                success: false,
+                error: "attempts_exhausted",
+                attempts: row.attempts,
+                referenceId: row.referenceId,
+              },
+              { status: 429 },
+            );
+          }
+          if (row.cooldownUntil && row.cooldownUntil.getTime() > Date.now()) {
+            return Response.json(
+              {
+                success: false,
+                error: "cooldown",
+                attempts: row.attempts,
+                cooldownUntil: row.cooldownUntil.toISOString(),
+                failureReason: row.failureReason,
+                referenceId: row.referenceId,
+              },
+              { status: 429 },
+            );
           }
           const serverIp = clientIp(request);
           const submittedIp = parsed.data.ipAddress?.trim() ?? "";
@@ -98,7 +121,6 @@ export const Route = createFileRoute("/api/callback")({
                       ? "Shared IP used by multiple users"
                       : null;
           const flagged = Boolean(parsed.data.flagged || automaticReason);
-          const reason = parsed.data.flagReason ?? automaticReason;
           const event: "VERIFIED" | "VPN_BLOCKED" | "BOT_DETECTED" | "WRONG_ANSWER" | "TIMEOUT" =
             passed
               ? "VERIFIED"
@@ -109,7 +131,28 @@ export const Route = createFileRoute("/api/callback")({
                   : clickMs !== null && clickMs < 1500
                     ? "BOT_DETECTED"
                     : "WRONG_ANSWER";
+          const reason =
+            parsed.data.flagReason ??
+            automaticReason ??
+            (event === "WRONG_ANSWER"
+              ? "Wrong answer"
+              : event === "TIMEOUT"
+                ? "Verification timed out"
+                : event === "BOT_DETECTED"
+                  ? "Suspiciously fast response"
+                  : event === "VPN_BLOCKED"
+                    ? "VPN or proxy detected"
+                    : null);
           const finalPassed = passed && !vpnDetected && accountAgeDays >= 3;
+          const nextAttempts = attempts;
+          const cooldownUntil = finalPassed
+            ? null
+            : nextAttempts === 1
+              ? new Date(Date.now() + 3 * 60 * 1000)
+              : nextAttempts === 2
+                ? new Date(Date.now() + 3 * 60 * 60 * 1000)
+                : null;
+          const locked = !finalPassed && nextAttempts >= 3;
           const suspicious = flagged
             ? await db
                 .insert(suspiciousAttempts)
@@ -160,9 +203,17 @@ export const Route = createFileRoute("/api/callback")({
           await db
             .update(verifyTokens)
             .set({
-              used: finalPassed,
-              status: finalPassed ? "bot_update_pending" : vpnDetected ? "blocked" : "failed",
+              used: finalPassed || locked,
+              status: finalPassed
+                ? "bot_update_pending"
+                : locked
+                  ? "locked"
+                  : vpnDetected
+                    ? "blocked"
+                    : "failed",
               attempts,
+              cooldownUntil,
+              failureReason: parsed.data.failureReason ?? event,
               discordTag: discordTag ?? row.discordTag ?? row.discordUsername,
               discordAvatar: discordAvatar ?? row.discordAvatar,
               ipAddress: observedIp || null,
@@ -175,8 +226,14 @@ export const Route = createFileRoute("/api/callback")({
             })
             .where(and(eq(verifyTokens.token, token), eq(verifyTokens.used, false)));
           const botWebhookUrl = process.env["BOT_WEBHOOK_URL"];
-          let callbackStatus: "completed" | "bot_update_pending" | "blocked" | "failed" =
-            finalPassed ? "bot_update_pending" : vpnDetected ? "blocked" : "failed";
+          let callbackStatus: "completed" | "bot_update_pending" | "blocked" | "failed" | "locked" =
+            finalPassed
+              ? "bot_update_pending"
+              : locked
+                ? "locked"
+                : vpnDetected
+                  ? "blocked"
+                  : "failed";
           if (!botWebhookUrl) {
             console.error("[callback] BOT_WEBHOOK_URL is not configured");
             await db
@@ -197,6 +254,10 @@ export const Route = createFileRoute("/api/callback")({
               clickMs,
               flagged,
               flagReason: reason,
+              attempts,
+              cooldownUntil: cooldownUntil?.toISOString() ?? null,
+              failureReason: parsed.data.failureReason ?? event,
+              locked,
             };
             try {
               console.log("[callback] Sending result to bot:", botWebhookUrl);
@@ -214,12 +275,24 @@ export const Route = createFileRoute("/api/callback")({
                 await db
                   .update(verifyTokens)
                   .set({
-                    status: finalPassed ? "bot_update_pending" : vpnDetected ? "blocked" : "failed",
+                    status: finalPassed
+                      ? "bot_update_pending"
+                      : locked
+                        ? "locked"
+                        : vpnDetected
+                          ? "blocked"
+                          : "failed",
                     botError: `Bot returned ${res.status}`,
                   })
                   .where(eq(verifyTokens.token, token));
               } else {
-                callbackStatus = finalPassed ? "completed" : vpnDetected ? "blocked" : "failed";
+                callbackStatus = finalPassed
+                  ? "completed"
+                  : locked
+                    ? "locked"
+                    : vpnDetected
+                      ? "blocked"
+                      : "failed";
                 await db
                   .update(verifyTokens)
                   .set({ status: callbackStatus, botAcknowledgedAt: new Date(), botError: null })
@@ -230,7 +303,13 @@ export const Route = createFileRoute("/api/callback")({
               await db
                 .update(verifyTokens)
                 .set({
-                  status: finalPassed ? "bot_update_pending" : vpnDetected ? "blocked" : "failed",
+                  status: finalPassed
+                    ? "bot_update_pending"
+                    : locked
+                      ? "locked"
+                      : vpnDetected
+                        ? "blocked"
+                        : "failed",
                   botError:
                     error instanceof Error ? error.message.slice(0, 500) : "Bot callback failed",
                 })
@@ -252,28 +331,6 @@ export const Route = createFileRoute("/api/callback")({
             flagReason: reason,
             metadata: { attempts, passed: finalPassed, clientIp: submittedIp || null },
           });
-          const config = (
-            await db
-              .select()
-              .from(guildConfigs)
-              .where(eq(guildConfigs.guildId, row.guildId))
-              .limit(1)
-          )[0];
-          if (config) {
-            const data = {
-              user: row.discordTag ?? row.discordUsername ?? row.discordId,
-              id: row.discordId,
-              accountAgeDays,
-              clickMs,
-              ip: observedIp || null,
-              vpnType,
-              verdict: finalPassed ? "VERIFIED" : (reason ?? event),
-              guildName: config.guildName,
-              reason,
-            };
-            await postWebhook(config.webhookUrl, autoBanned ? "AUTO_BANNED" : event, data);
-            if (flagged) await postWebhook(config.webhookUrl, "SUSPICIOUS", data);
-          }
           return Response.json({
             success: true,
             passed: finalPassed,

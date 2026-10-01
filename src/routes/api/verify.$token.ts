@@ -21,6 +21,29 @@ export const Route = createFileRoute("/api/verify/$token")({
             console.log("[verify/token] Result:", result);
             return Response.json(result);
           }
+          if (row.status === "locked" || (row.attempts ?? 0) >= 3) {
+            const result = {
+              valid: false,
+              reason: "lockout",
+              attempts: row.attempts,
+              failureReason: row.failureReason,
+              referenceId: row.referenceId,
+            } as const;
+            console.log("[verify/token] Result:", result);
+            return Response.json(result);
+          }
+          if (row.cooldownUntil && row.cooldownUntil.getTime() > Date.now()) {
+            const result = {
+              valid: false,
+              reason: "cooldown",
+              attempts: row.attempts,
+              cooldownUntil: row.cooldownUntil.toISOString(),
+              failureReason: row.failureReason,
+              referenceId: row.referenceId,
+            } as const;
+            console.log("[verify/token] Result:", result);
+            return Response.json(result);
+          }
           if (row.used && !["completed", "bot_update_pending"].includes(row.status)) {
             const result = { valid: false, reason: "used" } as const;
             console.log("[verify/token] Result:", result);
@@ -40,6 +63,9 @@ export const Route = createFileRoute("/api/verify/$token")({
             expiresAt: row.expiresAt.toISOString(),
             status: row.status,
             referenceId: row.referenceId,
+            attempts: row.attempts,
+            cooldownUntil: row.cooldownUntil?.toISOString() ?? null,
+            failureReason: row.failureReason,
             botAcknowledged: Boolean(row.botAcknowledgedAt),
             botError: row.botError,
             used: row.used,

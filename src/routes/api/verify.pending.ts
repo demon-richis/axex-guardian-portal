@@ -26,22 +26,44 @@ export const Route = createFileRoute("/api/verify/pending")({
           const { verifyTokens } = await import("@/lib/db/schema");
           const { getDb } = await import("@/lib/db/client.server");
           const existing = await getDb()
-            .select({ token: verifyTokens.token })
+            .select({
+              token: verifyTokens.token,
+              status: verifyTokens.status,
+              attempts: verifyTokens.attempts,
+              cooldownUntil: verifyTokens.cooldownUntil,
+              failureReason: verifyTokens.failureReason,
+              expiresAt: verifyTokens.expiresAt,
+            })
             .from(verifyTokens)
             .where(
               and(
                 eq(verifyTokens.userId, userId.data),
                 eq(verifyTokens.guildId, guildId.data),
-                eq(verifyTokens.used, false),
                 gt(verifyTokens.expiresAt, new Date()),
               ),
             )
             .orderBy(desc(verifyTokens.createdAt))
             .limit(1);
 
-          const token = existing[0]?.token ?? null;
-          console.log("[verify/pending] Result:", token ? "found" : "not found");
-          return Response.json({ token });
+          const row = existing[0];
+          const locked = row?.status === "locked" || (row?.attempts ?? 0) >= 3;
+          const coolingDown = Boolean(
+            row?.cooldownUntil && row.cooldownUntil.getTime() > Date.now(),
+          );
+          const token =
+            row && !locked && !coolingDown && row.status !== "completed" ? row.token : null;
+          console.log("[verify/pending] Result:", {
+            state: locked ? "locked" : coolingDown ? "cooldown" : token ? "found" : "not found",
+            attempts: row?.attempts ?? 0,
+          });
+          return Response.json({
+            token,
+            status: row?.status ?? null,
+            attempts: row?.attempts ?? 0,
+            locked,
+            cooldownUntil: row?.cooldownUntil?.toISOString() ?? null,
+            failureReason: row?.failureReason ?? null,
+          });
         } catch (error) {
           console.error("[verify/pending] Error:", error);
           return Response.json({ token: null }, { status: 500 });

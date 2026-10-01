@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { z } from "zod";
 
 const Body = z.object({
@@ -27,7 +27,7 @@ export const Route = createFileRoute("/api/flag")({
         }
         console.log("[flag] Recording suspicious attempt for guild:", parsed.data.guildId);
         try {
-          const { auditLogs, guildConfigs, suspiciousAttempts } = await import("@/lib/db/schema");
+          const { auditLogs, suspiciousAttempts } = await import("@/lib/db/schema");
           const db = (await import("@/lib/db/client.server")).getDb();
           const value = parsed.data;
           const attempt = (
@@ -71,27 +71,6 @@ export const Route = createFileRoute("/api/flag")({
             flagged: true,
             flagReason: value.reason,
           });
-          const config = (
-            await db
-              .select()
-              .from(guildConfigs)
-              .where(eq(guildConfigs.guildId, value.guildId))
-              .limit(1)
-          )[0];
-          if (config) {
-            const { postWebhook } = await import("@/lib/webhook.server");
-            const data = {
-              user: value.discordTag ?? value.userId,
-              id: value.userId,
-              accountAgeDays: value.accountAgeDays ?? null,
-              clickMs: value.clickMs ?? null,
-              ip: value.ipAddress ?? null,
-              vpnType: null,
-              verdict: value.reason,
-              reason: value.reason,
-            };
-            await postWebhook(config.webhookUrl, autoBanned ? "AUTO_BANNED" : "SUSPICIOUS", data);
-          }
           return Response.json({
             success: true,
             autoBanned,

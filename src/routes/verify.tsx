@@ -78,12 +78,15 @@ type TokenInfo = {
   expiresAt?: string;
   status?: string;
   referenceId?: string | null;
+  attempts?: number;
+  cooldownUntil?: string | null;
+  failureReason?: string | null;
   botAcknowledged?: boolean;
   botError?: string | null;
 };
 type ErrorKind =
   "invalid" | "used" | "timeout" | "lockout" | "auth" | "network" | "bot" | "generic";
-type Phase = "loading" | "auth" | "vpn" | "captcha" | "pending" | "done" | "error";
+type Phase = "loading" | "auth" | "vpn" | "captcha" | "cooldown" | "pending" | "done" | "error";
 
 const ERRORS: Record<ErrorKind, [string, string]> = {
   invalid: ["Invalid Link", "This verification link is invalid or has expired."],
@@ -152,6 +155,15 @@ function writeAttemptCount(key: string, attempts: number): void {
   }
 }
 
+function formatCountdown(seconds: number | null): string {
+  if (seconds === null) return "calculating…";
+  const safe = Math.max(0, seconds);
+  const hours = Math.floor(safe / 3600);
+  const minutes = Math.floor((safe % 3600) / 60);
+  const remaining = safe % 60;
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}:${String(remaining).padStart(2, "0")}`;
+}
+
 function VerifyPage() {
   const { token = "", auth, error, demo } = Route.useSearch();
   const demoMode = demo === "1";
@@ -161,7 +173,10 @@ function VerifyPage() {
   const [info, setInfo] = useState<TokenInfo | null>(null);
   const [busy, setBusy] = useState(false);
   const [attempts, setAttempts] = useState(0);
+  const [cooldownUntil, setCooldownUntil] = useState<string | null>(null);
+  const [failureReason, setFailureReason] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const [cooldownSeconds, setCooldownSeconds] = useState<number | null>(null);
   const [question] = useState(() => QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)]!);
 
   const attemptKey = `axex:verify-attempts:${effectiveToken}`;
@@ -183,6 +198,17 @@ function VerifyPage() {
     const id = window.setInterval(tick, 1000);
     return () => window.clearInterval(id);
   }, [info?.expiresAt]);
+
+  useEffect(() => {
+    if (!cooldownUntil) return;
+    const tick = () =>
+      setCooldownSeconds(
+        Math.max(0, Math.ceil((new Date(cooldownUntil).getTime() - Date.now()) / 1000)),
+      );
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [cooldownUntil]);
 
   useEffect(() => {
     console.log("[verify] Phase:", phase, { busy, hasUser: Boolean(info?.discordUser) });
@@ -262,7 +288,6 @@ function VerifyPage() {
           createdAt: "2018-01-01T00:00:00.000Z",
         },
       });
-      if (readAttemptCount(attemptKey) >= 3) return fail("lockout");
       console.log("[verify] Demo identity loaded; showing Step 1");
       setPhase("auth");
       return;
@@ -283,12 +308,26 @@ function VerifyPage() {
           hasDiscordIdentity: Boolean(data.discordUser),
         });
         if (!active) return;
-        if (!data.valid)
+        if (!data.valid) {
+          if (data.reason === "cooldown") {
+            setAttempts(data.attempts ?? 0);
+            setCooldownUntil(data.cooldownUntil ?? null);
+            setFailureReason(data.failureReason ?? null);
+            setPhase("cooldown");
+            return;
+          }
           return fail(
-            data.reason === "used" ? "used" : data.reason === "error" ? "generic" : "invalid",
+            data.reason === "lockout"
+              ? "lockout"
+              : data.reason === "used"
+                ? "used"
+                : data.reason === "error"
+                  ? "generic"
+                  : "invalid",
           );
+        }
         setInfo(data);
-        if (readAttemptCount(attemptKey) >= 3) return fail("lockout");
+        setAttempts(data.attempts ?? 0);
         if (error) return fail(error === "auth" ? "auth" : "generic");
         if (auth && data.discordUser) {
           console.log("[verify] OAuth complete: identity found; moving from Step 1 to Step 2");
@@ -315,7 +354,12 @@ function VerifyPage() {
   }, [attemptKey, token, auth, error, demoMode, fail, runIpCheck]);
 
   const submitAttempt = useCallback(
-    async (passed: boolean, clickMs: number, timeout = false) => {
+    async (
+      passed: boolean,
+      clickMs: number,
+      timeout = false,
+      failureReason?: "WRONG_ANSWER" | "TIMEOUT" | "BOT_DETECTED" | "VPN_BLOCKED",
+    ) => {
       console.log("[verify] Submitting verification result:", { passed, timeout });
       if (demoMode) {
         console.log("[verify] Demo result accepted locally");
@@ -337,6 +381,7 @@ function VerifyPage() {
             : 0,
           clickMs,
           timeout,
+          failureReason,
         }),
       }).catch((requestError: unknown) => {
         console.error("[verify] Callback request failed:", requestError);
@@ -354,6 +399,9 @@ function VerifyPage() {
         attempts?: number;
         status?: string;
         referenceId?: string | null;
+        cooldownUntil?: string | null;
+        failureReason?: string | null;
+        locked?: boolean;
         error?: string;
       } | null;
     },
@@ -395,30 +443,50 @@ function VerifyPage() {
           token,
           result?.error === "network_check_unavailable" ? "network_unavailable" : "callback_failed",
         );
-        fail(
-          result?.error === "network_check_unavailable"
-            ? "network"
-            : result?.attempts && result.attempts >= 3
-              ? "lockout"
-              : "generic",
-        );
+        if (result?.error === "cooldown" && result.cooldownUntil) {
+          setAttempts(result.attempts ?? attempts);
+          setCooldownUntil(result.cooldownUntil);
+          setFailureReason(result.failureReason ?? null);
+          setPhase("cooldown");
+        } else {
+          fail(
+            result?.error === "network_check_unavailable"
+              ? "network"
+              : result?.attempts && result.attempts >= 3
+                ? "lockout"
+                : "generic",
+          );
+        }
       }
     },
-    [fail, submitAttempt, token],
+    [attempts, fail, submitAttempt, token],
   );
 
   const failedAttempt = useCallback(
-    async (clickMs: number, timeout = false) => {
+    async (
+      clickMs: number,
+      timeout = false,
+      failureReason: "WRONG_ANSWER" | "TIMEOUT" = timeout ? "TIMEOUT" : "WRONG_ANSWER",
+    ) => {
       const nextAttempts = attempts + (timeout ? 0 : 1);
       console.log("[verify] Step 2 failed:", { timeout, nextAttempts });
       if (!timeout) {
         writeAttemptCount(attemptKey, nextAttempts);
         setAttempts(nextAttempts);
       }
-      const result = await submitAttempt(false, clickMs, timeout);
+      const result = await submitAttempt(false, clickMs, timeout, failureReason);
       track(token, timeout ? "verification_error" : "captcha_failed");
-      if (nextAttempts >= 3 || (result?.attempts ?? 0) >= 3) fail("lockout");
-      else if (timeout) fail("timeout");
+      const serverAttempts = result?.attempts ?? nextAttempts;
+      if (result?.cooldownUntil && serverAttempts < 3) {
+        setAttempts(serverAttempts);
+        setCooldownUntil(result.cooldownUntil);
+        setFailureReason(result.failureReason ?? failureReason);
+        setPhase("cooldown");
+      } else if (serverAttempts >= 3 || result?.locked) {
+        fail("lockout");
+      } else if (timeout) {
+        fail("timeout");
+      }
     },
     [attemptKey, attempts, fail, submitAttempt, token],
   );
@@ -426,7 +494,7 @@ function VerifyPage() {
   const step =
     phase === "auth" || phase === "vpn" || phase === "loading"
       ? 0
-      : phase === "captcha" || phase === "pending"
+      : phase === "captcha" || phase === "cooldown" || phase === "pending"
         ? 1
         : 2;
   const user = info?.discordUser;
@@ -457,6 +525,50 @@ function VerifyPage() {
                 desc={ERRORS[errorKind][1]}
                 onRetry={errorKind === "network" ? runIpCheck : undefined}
               />
+            </motion.div>
+          )}
+
+          {phase === "cooldown" && (
+            <motion.div key="cooldown" {...fade} className="space-y-5 text-center">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-[var(--amber)]/40 bg-[var(--amber)]/10 text-2xl">
+                ⏳
+              </div>
+              <div>
+                <h2 className="text-xl font-bold text-foreground">Verification paused</h2>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  Your verification was not accepted. You can try again after the cooldown.
+                </p>
+              </div>
+              <div className="rounded-xl border border-[var(--amber)]/30 bg-[var(--amber)]/10 p-4 text-left">
+                <p className="text-xs uppercase tracking-[0.18em] text-[var(--amber)]">Reason</p>
+                <p className="mt-1 text-sm font-semibold text-foreground">
+                  {failureReason === "WRONG_ANSWER"
+                    ? "Wrong answer"
+                    : failureReason === "TIMEOUT"
+                      ? "Verification timed out"
+                      : (failureReason ?? "Verification failed")}
+                </p>
+                <p className="mt-3 text-xs text-muted-foreground">
+                  Attempt {Math.min(attempts, 3)} of 3 · You may retry in
+                </p>
+                <p className="mt-1 text-2xl font-bold text-foreground">
+                  {formatCountdown(cooldownSeconds)}
+                </p>
+              </div>
+              {info?.referenceId && (
+                <p className="text-xs text-muted-foreground">
+                  Reference: <strong className="text-foreground">{info.referenceId}</strong>
+                </p>
+              )}
+              {cooldownSeconds === 0 ? (
+                <PrimaryButton onClick={() => window.location.reload()}>
+                  Try verification again
+                </PrimaryButton>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Return using the same verification link when the timer ends.
+                </p>
+              )}
             </motion.div>
           )}
 
@@ -546,8 +658,8 @@ function VerifyPage() {
                 ageDays={ageDays ?? 0}
                 question={question}
                 onPass={complete}
-                onFail={failedAttempt}
-                onTimeout={(clickMs) => failedAttempt(clickMs, true)}
+                onFail={(clickMs, reason) => failedAttempt(clickMs, false, reason)}
+                onTimeout={(clickMs) => failedAttempt(clickMs, true, "TIMEOUT")}
               />
             </motion.div>
           )}
@@ -816,7 +928,7 @@ function Captcha({
   ageDays: number;
   question: (typeof QUESTIONS)[number];
   onPass: (clickMs: number) => void;
-  onFail: (clickMs: number) => Promise<void>;
+  onFail: (clickMs: number, reason?: "WRONG_ANSWER" | "TIMEOUT") => Promise<void>;
   onTimeout: (clickMs: number) => void;
 }) {
   const [left, setLeft] = useState(60);
@@ -845,7 +957,7 @@ function Captcha({
     } else {
       setFlash({ opt, ok: false });
       void shake.start({ x: [-8, 8, -8, 8, 0], transition: { duration: 0.4 } });
-      void onFail(Date.now() - startedAt.current);
+      void onFail(Date.now() - startedAt.current, "WRONG_ANSWER");
       setTimeout(() => setFlash(null), 500);
     }
   };

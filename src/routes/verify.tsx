@@ -443,10 +443,10 @@ function VerifyPage() {
           token,
           result?.error === "network_check_unavailable" ? "network_unavailable" : "callback_failed",
         );
-        if (result?.error === "cooldown" && result.cooldownUntil) {
+        if (result?.cooldownUntil && (result.attempts ?? 0) < 3) {
           setAttempts(result.attempts ?? attempts);
           setCooldownUntil(result.cooldownUntil);
-          setFailureReason(result.failureReason ?? null);
+          setFailureReason(result.failureReason ?? "Verification failed");
           setPhase("cooldown");
         } else {
           fail(

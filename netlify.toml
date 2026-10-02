@@ -1,0 +1,5 @@
+[build.environment]
+  # ALLOW_LOCALHOST_NETWORK_CHECK is a boolean flag ("true"/"false"), not a secret.
+  # Its value matches ordinary words throughout the source and build output,
+  # which otherwise trips Netlify's secrets scanner.
+  SECRETS_SCAN_OMIT_KEYS = "ALLOW_LOCALHOST_NETWORK_CHECK"

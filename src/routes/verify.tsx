@@ -780,14 +780,17 @@ function CardShell({ children, phase }: { children: React.ReactNode; phase: Phas
 }
 
 const LOADING_STAGES = [
-  ["Reading your verification token", "Confirming that this link belongs to your session."],
   [
-    "Checking your Discord session",
-    "Preparing a secure sign-in handoff. Your password stays with Discord.",
+    "Validating verification link",
+    "Confirming that this link is valid and belongs to this server.",
   ],
-  ["Checking network security", "Looking for VPN, proxy, or hosting connections."],
-  ["Preparing the human check", "Setting up one short question for you."],
-  ["Almost ready", "Your secure verification step is loading now."],
+  [
+    "Preparing Discord sign-in",
+    "Loading the Discord identity check. Your password stays with Discord.",
+  ],
+  ["Checking network reputation", "Checking for VPN, proxy, or hosting connections."],
+  ["Preparing the human check", "Loading one short question to confirm you are human."],
+  ["Preparing access confirmation", "Getting the final verification result ready for the server."],
 ] as const;
 
 function VerificationLoader({ stage, networkCheck }: { stage: number; networkCheck: boolean }) {
@@ -841,7 +844,9 @@ function VerificationLoader({ stage, networkCheck }: { stage: number; networkChe
                         : "bg-[var(--pill)] text-muted-foreground"
                   }`}
                 >
-                  {complete ? null : current ? (
+                  {complete ? (
+                    "✓"
+                  ) : current ? (
                     <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--green)]" />
                   ) : (
                     index + 1

@@ -220,7 +220,7 @@ function VerifyPage() {
     setLoadingStage(0);
     const id = window.setInterval(() => {
       setLoadingStage((current) => Math.min(current + 1, 4));
-    }, 1300);
+    }, 1800);
     return () => window.clearInterval(id);
   }, [phase]);
 
@@ -301,7 +301,7 @@ function VerifyPage() {
       console.log("[verify] Demo identity loaded; showing Step 1 after preparation delay");
       window.setTimeout(() => {
         setPhase("auth");
-      }, 6500);
+      }, 9000);
       return;
     }
     if (!token) return fail("invalid");
@@ -310,7 +310,7 @@ function VerifyPage() {
     (async () => {
       try {
         console.log("[verify] Validating verification token");
-        const minimumPreparation = new Promise<void>((resolve) => window.setTimeout(resolve, 6500));
+        const minimumPreparation = new Promise<void>((resolve) => window.setTimeout(resolve, 9000));
         const res = await fetch(`/api/verify/${encodeURIComponent(token)}`);
         console.log("[verify] Token validation response:", res.status);
         if (!res.ok) throw new Error(`Token validation failed with status ${res.status}`);
@@ -800,18 +800,12 @@ function VerificationLoader({ stage, networkCheck }: { stage: number; networkChe
     >
       <div className="w-full max-w-[330px]">
         <div className="mb-6 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--green-soft)] text-lg text-[var(--green)]">
-              <span className="absolute inset-0 animate-ping rounded-xl border border-[var(--green)]/30" />
-              <span className="relative">✦</span>
-            </div>
-            <div>
-              <p className="text-sm font-bold text-foreground">Axex Secure Check</p>
-              <p className="text-[11px] text-muted-foreground">Preparing your verification</p>
-            </div>
+          <div>
+            <p className="text-sm font-bold text-foreground">Secure verification</p>
+            <p className="mt-1 text-[11px] text-muted-foreground">Preparing your verification</p>
           </div>
-          <span className="rounded-full border border-[var(--green)]/25 px-2 py-1 text-[10px] font-semibold text-[var(--green-text)]">
-            {networkCheck ? "LIVE" : `${activeStage + 1}/5`}
+          <span className="text-[11px] text-muted-foreground">
+            {networkCheck ? "Checking" : `Step ${activeStage + 1} of 5`}
           </span>
         </div>
 
@@ -841,15 +835,13 @@ function VerificationLoader({ stage, networkCheck }: { stage: number; networkChe
                 <span
                   className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
                     complete
-                      ? "bg-[var(--green)] text-black"
+                      ? "bg-[var(--green)]"
                       : current
                         ? "border border-[var(--green)] text-[var(--green)]"
                         : "bg-[var(--pill)] text-muted-foreground"
                   }`}
                 >
-                  {complete ? (
-                    "✓"
-                  ) : current ? (
+                  {complete ? null : current ? (
                     <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--green)]" />
                   ) : (
                     index + 1

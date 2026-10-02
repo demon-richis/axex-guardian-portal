@@ -177,6 +177,7 @@ function VerifyPage() {
   const [failureReason, setFailureReason] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [cooldownSeconds, setCooldownSeconds] = useState<number | null>(null);
+  const [loadingStage, setLoadingStage] = useState(0);
   const [question] = useState(() => QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)]!);
 
   const attemptKey = `axex:verify-attempts:${effectiveToken}`;
@@ -213,6 +214,15 @@ function VerifyPage() {
   useEffect(() => {
     console.log("[verify] Phase:", phase, { busy, hasUser: Boolean(info?.discordUser) });
   }, [busy, info?.discordUser, phase]);
+
+  useEffect(() => {
+    if (phase !== "loading") return;
+    setLoadingStage(0);
+    const id = window.setInterval(() => {
+      setLoadingStage((current) => Math.min(current + 1, 4));
+    }, 1300);
+    return () => window.clearInterval(id);
+  }, [phase]);
 
   const fail = useCallback((k: ErrorKind) => {
     console.error("[verify] Transitioning to error:", k);
@@ -288,8 +298,10 @@ function VerifyPage() {
           createdAt: "2018-01-01T00:00:00.000Z",
         },
       });
-      console.log("[verify] Demo identity loaded; showing Step 1");
-      setPhase("auth");
+      console.log("[verify] Demo identity loaded; showing Step 1 after preparation delay");
+      window.setTimeout(() => {
+        setPhase("auth");
+      }, 6500);
       return;
     }
     if (!token) return fail("invalid");
@@ -298,6 +310,7 @@ function VerifyPage() {
     (async () => {
       try {
         console.log("[verify] Validating verification token");
+        const minimumPreparation = new Promise<void>((resolve) => window.setTimeout(resolve, 6500));
         const res = await fetch(`/api/verify/${encodeURIComponent(token)}`);
         console.log("[verify] Token validation response:", res.status);
         if (!res.ok) throw new Error(`Token validation failed with status ${res.status}`);
@@ -328,6 +341,8 @@ function VerifyPage() {
         }
         setInfo(data);
         setAttempts(data.attempts ?? 0);
+        await minimumPreparation;
+        if (!active) return;
         if (error) return fail(error === "auth" ? "auth" : "generic");
         if (auth && data.discordUser) {
           console.log("[verify] OAuth complete: identity found; moving from Step 1 to Step 2");
@@ -509,11 +524,7 @@ function VerifyPage() {
 
       <CardShell phase={phase}>
         {phase === "loading" || busy ? (
-          <Spinner
-            label={
-              phase === "loading" ? "Loading your secure verification" : "Checking your connection"
-            }
-          />
+          <VerificationLoader stage={busy ? 2 : loadingStage} networkCheck={busy} />
         ) : null}
         {phase !== "error" && phase !== "loading" && <Steps step={step} />}
 
@@ -768,16 +779,98 @@ function CardShell({ children, phase }: { children: React.ReactNode; phase: Phas
   );
 }
 
-function Spinner({ label }: { label: string }) {
+const LOADING_STAGES = [
+  ["Reading your verification token", "Confirming that this link belongs to your session."],
+  [
+    "Checking your Discord session",
+    "Preparing a secure sign-in handoff. Your password stays with Discord.",
+  ],
+  ["Checking network security", "Looking for VPN, proxy, or hosting connections."],
+  ["Preparing the human check", "Setting up one short question for you."],
+  ["Almost ready", "Your secure verification step is loading now."],
+] as const;
+
+function VerificationLoader({ stage, networkCheck }: { stage: number; networkCheck: boolean }) {
+  const activeStage = Math.min(Math.max(stage, 0), LOADING_STAGES.length - 1);
   return (
     <div
-      className="absolute inset-0 z-20 flex items-center justify-center bg-card/80 backdrop-blur-sm"
+      className="absolute inset-0 z-20 flex items-center justify-center bg-card px-6 py-8"
       role="status"
       aria-live="polite"
     >
-      <div className="flex flex-col items-center gap-3">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-[var(--red)]/20 border-t-[var(--green)]" />
-        <span className="text-xs text-muted-foreground">{label}</span>
+      <div className="w-full max-w-[330px]">
+        <div className="mb-6 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="relative flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--green-soft)] text-lg text-[var(--green)]">
+              <span className="absolute inset-0 animate-ping rounded-xl border border-[var(--green)]/30" />
+              <span className="relative">✦</span>
+            </div>
+            <div>
+              <p className="text-sm font-bold text-foreground">Axex Secure Check</p>
+              <p className="text-[11px] text-muted-foreground">Preparing your verification</p>
+            </div>
+          </div>
+          <span className="rounded-full border border-[var(--green)]/25 px-2 py-1 text-[10px] font-semibold text-[var(--green-text)]">
+            {networkCheck ? "LIVE" : `${activeStage + 1}/5`}
+          </span>
+        </div>
+
+        <div className="mb-5 h-1.5 overflow-hidden rounded-full bg-[var(--pill)]">
+          <motion.div
+            className="h-full rounded-full bg-gradient-to-r from-[var(--red)] via-[var(--amber)] to-[var(--green)]"
+            animate={{
+              width: `${Math.max(12, ((activeStage + 1) / LOADING_STAGES.length) * 100)}%`,
+            }}
+            transition={{ duration: 0.45, ease: "easeOut" }}
+          />
+        </div>
+
+        <div className="space-y-2">
+          {LOADING_STAGES.map(([title, description], index) => {
+            const complete = index < activeStage && !networkCheck;
+            const current = index === activeStage;
+            return (
+              <div
+                key={title}
+                className={`flex items-start gap-3 rounded-xl border px-3 py-3 transition-colors ${
+                  current
+                    ? "border-[var(--green)]/30 bg-[var(--green-soft)]"
+                    : "border-transparent bg-[var(--surface)] opacity-55"
+                }`}
+              >
+                <span
+                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                    complete
+                      ? "bg-[var(--green)] text-black"
+                      : current
+                        ? "border border-[var(--green)] text-[var(--green)]"
+                        : "bg-[var(--pill)] text-muted-foreground"
+                  }`}
+                >
+                  {complete ? (
+                    "✓"
+                  ) : current ? (
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--green)]" />
+                  ) : (
+                    index + 1
+                  )}
+                </span>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-foreground">{title}</p>
+                  {current && (
+                    <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
+                      {description}
+                    </p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+
+        <p className="mt-5 text-center text-[11px] text-muted-foreground">
+          This usually takes a few seconds. Please keep this tab open.
+        </p>
       </div>
     </div>
   );
@@ -840,13 +933,6 @@ function Header({ info }: { info: TokenInfo }) {
             {info.guildMemberCount.toLocaleString()} members • Verification required
           </p>
         </div>
-      </div>
-      <div className="rounded-xl border border-[var(--surface-border)] bg-[var(--surface)] p-3 text-xs leading-5 text-muted-foreground">
-        <p className="font-semibold text-foreground">Verification takes about 30 seconds</p>
-        <p className="mt-1">
-          We confirm Discord account ownership, check the network for VPNs or proxies, and ask one
-          short human question. Discord handles sign-in; Axex never sees your password.
-        </p>
       </div>
     </div>
   );

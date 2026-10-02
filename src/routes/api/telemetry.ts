@@ -21,6 +21,21 @@ const Body = z.object({
   device: z.enum(["mobile", "desktop", "unknown"]).optional(),
 });
 
+const intelligenceEvents: Record<string, string> = {
+  page_opened: "VERIFY_START",
+  oauth_started: "OAUTH_STARTED",
+  oauth_completed: "OAUTH_COMPLETED",
+  network_clear: "NETWORK_CLEAR",
+  network_blocked: "NETWORK_BLOCKED",
+  network_unavailable: "NETWORK_UNAVAILABLE",
+  captcha_passed: "CHALLENGE_PASSED",
+  captcha_failed: "CHALLENGE_FAIL",
+  callback_sent: "CALLBACK_SENT",
+  callback_failed: "CALLBACK_FAILED",
+  verification_completed: "PORTAL_COMPLETED",
+  verification_error: "PORTAL_ERROR",
+};
+
 export const Route = createFileRoute("/api/telemetry")({
   server: {
     handlers: {
@@ -30,9 +45,18 @@ export const Route = createFileRoute("/api/telemetry")({
         try {
           const { getDb } = await import("@/lib/db/client.server");
           const { auditLogs, verifyTokens } = await import("@/lib/db/schema");
+          const { analyzePortalUser, recordPortalEvent } =
+            await import("@/lib/intelligence.server");
           const row = (
             await getDb()
-              .select({ guildId: verifyTokens.guildId, referenceId: verifyTokens.referenceId })
+              .select({
+                userId: verifyTokens.userId,
+                guildId: verifyTokens.guildId,
+                referenceId: verifyTokens.referenceId,
+                discordId: verifyTokens.discordId,
+                discordUsername: verifyTokens.discordUsername,
+                discordAvatar: verifyTokens.discordAvatar,
+              })
               .from(verifyTokens)
               .where(eq(verifyTokens.token, parsed.data.token))
               .limit(1)
@@ -46,6 +70,27 @@ export const Route = createFileRoute("/api/telemetry")({
               severity: "info",
               metadata: { device: parsed.data.device ?? "unknown", referenceId: row.referenceId },
             });
+
+          const eventType = intelligenceEvents[parsed.data.event];
+          const userId = row.discordId ?? row.userId;
+          if (eventType && userId) {
+            await recordPortalEvent({
+              userId,
+              guildId: row.guildId,
+              eventType,
+              metadata: {
+                device: parsed.data.device ?? "unknown",
+                referenceId: row.referenceId,
+                source: "guardian_portal",
+              },
+            });
+          }
+          if (parsed.data.event === "page_opened") {
+            await analyzePortalUser(userId, row.guildId, {
+              username: row.discordUsername,
+              avatar: row.discordAvatar,
+            });
+          }
           return Response.json({ success: true });
         } catch (error) {
           console.error("[telemetry] Failed:", error);

@@ -25,3 +25,7 @@ Run `npm run db:push` to apply the Drizzle schema to Neon. Build for production 
 - `PROXYCHECK_API_KEY`
 - `AXEX_BOT_API_KEY` (optional shared key for bot registration and audit APIs)
 - `BOT_WEBHOOK_URL` (bot verification-result receiver)
+- `INTELLIGENCE_URL` (server-only account intelligence API base URL)
+- `INTELLIGENCE_API_KEY` (server-only account intelligence API key)
+
+`INTELLIGENCE_URL` and `INTELLIGENCE_API_KEY` must be configured in the hosting provider's server environment. Do not prefix them with `VITE_`, because they must never be exposed to browser code.

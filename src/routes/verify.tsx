@@ -771,7 +771,7 @@ function CardShell({ children, phase }: { children: React.ReactNode; phase: Phas
   return (
     <div
       data-phase={phase}
-      className="relative w-full max-w-[400px] overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-[0_1px_2px_rgba(0,0,0,0.6),0_12px_32px_rgba(0,0,0,0.55),0_40px_100px_rgba(220,38,38,0.08)]"
+      className={`relative w-full max-w-[400px] overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-[0_1px_2px_rgba(0,0,0,0.6),0_12px_32px_rgba(0,0,0,0.55),0_40px_100px_rgba(220,38,38,0.08)] ${phase === "loading" ? "min-h-[500px]" : ""}`}
     >
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-[var(--red)] via-[var(--green)] to-transparent" />
       {children}

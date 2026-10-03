@@ -5,7 +5,12 @@ import viteReact from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 export default defineConfig({
-  plugins: [tanstackStart({ server: { entry: "server" } }), netlify(), viteReact(), tailwindcss()],
+  plugins: [
+    tanstackStart({ server: { entry: "server" } }),
+    netlify({ dev: { edgeFunctions: { enabled: false } } }),
+    viteReact(),
+    tailwindcss(),
+  ],
   resolve: { tsconfigPaths: true },
   server: {
     allowedHosts: [

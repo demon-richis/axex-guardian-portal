@@ -45,7 +45,7 @@ export const Route = createFileRoute("/api/telemetry")({
         try {
           const { getDb } = await import("@/lib/db/client.server");
           const { auditLogs, verifyTokens } = await import("@/lib/db/schema");
-          const { analyzePortalUser, recordPortalEvent } =
+          const { analyzePortalUser, notifyBotIntelligence, recordPortalEvent } =
             await import("@/lib/intelligence.server");
           const row = (
             await getDb()
@@ -85,11 +85,14 @@ export const Route = createFileRoute("/api/telemetry")({
               },
             });
           }
-          if (parsed.data.event === "page_opened") {
-            await analyzePortalUser(userId, row.guildId, {
+          if (parsed.data.event === "page_opened" || parsed.data.event === "oauth_completed") {
+            const analysis = await analyzePortalUser(userId, row.guildId, {
               username: row.discordUsername,
               avatar: row.discordAvatar,
             });
+            if (analysis) {
+              await notifyBotIntelligence(userId, row.guildId, analysis, parsed.data.event);
+            }
           }
           return Response.json({ success: true });
         } catch (error) {

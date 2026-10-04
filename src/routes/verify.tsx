@@ -534,6 +534,7 @@ function VerifyPage() {
               <ErrorAlert
                 title={ERRORS[errorKind][0]}
                 desc={ERRORS[errorKind][1]}
+                referenceId={info?.referenceId ?? null}
                 onRetry={errorKind === "network" ? runIpCheck : undefined}
               />
             </motion.div>
@@ -1130,10 +1131,12 @@ function Captcha({
 function ErrorAlert({
   title,
   desc,
+  referenceId,
   onRetry,
 }: {
   title: string;
   desc: string;
+  referenceId?: string | null;
   onRetry?: (() => void) | undefined;
 }) {
   return (
@@ -1156,6 +1159,20 @@ function ErrorAlert({
       >
         <p className="text-sm font-semibold text-foreground">{title}</p>
         <p className="mt-1 text-xs text-muted-foreground">{desc}</p>
+        {referenceId && (
+          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-background/30 px-3 py-2 text-xs text-muted-foreground">
+            <span>
+              Reference <strong className="text-foreground">{referenceId}</strong>
+            </span>
+            <button
+              type="button"
+              onClick={() => void navigator.clipboard?.writeText(referenceId)}
+              className="font-semibold text-[var(--green-text)] underline underline-offset-2"
+            >
+              Copy
+            </button>
+          </div>
+        )}
         {onRetry && (
           <button
             type="button"

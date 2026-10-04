@@ -5,7 +5,7 @@ export const Route = createFileRoute("/api/verify/$token")({
   server: {
     handlers: {
       GET: async ({ params }) => {
-        console.log("[verify/token] Looking up token:", params.token);
+        console.log("[verify/token] Looking up token:", `${params.token.slice(0, 8)}…`);
         const { getDb, snowflakeToDate } = await import("@/lib/db/client.server");
         const { verifyTokens } = await import("@/lib/db/schema");
         try {

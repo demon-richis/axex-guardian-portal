@@ -31,7 +31,7 @@ export const Route = createFileRoute("/api/bot/token")({
           const { getDb } = await import("@/lib/db/client.server");
           const { token, userId, guildId, guildName, guildMemberCount, expiresAt } = parsed.data;
           const referenceId = `AX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
-          console.log("[bot/token] Received token:", token);
+          console.log("[bot/token] Received token:", `${token.slice(0, 8)}…`);
 
           await getDb()
             .insert(verifyTokens)

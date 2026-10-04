@@ -42,6 +42,21 @@ export const Route = createFileRoute("/api/telemetry")({
       POST: async ({ request }) => {
         const parsed = Body.safeParse(await request.json().catch(() => null));
         if (!parsed.success) return Response.json({ success: false }, { status: 400 });
+        const { isSameOrigin, rateLimit, requestAddress } = await import("@/lib/rate-limit.server");
+        if (!isSameOrigin(request)) {
+          return Response.json({ success: false, error: "cross_origin_request" }, { status: 403 });
+        }
+        const requestLimit = rateLimit(`telemetry:${requestAddress(request)}`, 60, 60_000);
+        if (!requestLimit.allowed) {
+          return Response.json(
+            {
+              success: false,
+              error: "rate_limited",
+              retryAfterSeconds: requestLimit.retryAfterSeconds,
+            },
+            { status: 429, headers: { "Retry-After": String(requestLimit.retryAfterSeconds) } },
+          );
+        }
         try {
           const { getDb } = await import("@/lib/db/client.server");
           const { auditLogs, verifyTokens } = await import("@/lib/db/schema");

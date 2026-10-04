@@ -2,6 +2,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
+const inFlightCallbacks = new Set<string>();
+
 const Body = z.object({
   token: z.string().min(1).max(200),
   discordId: z.string().max(40).optional(),
@@ -25,6 +27,21 @@ export const Route = createFileRoute("/api/callback")({
     handlers: {
       POST: async ({ request }) => {
         console.log("[callback] Verification result received");
+        const { isSameOrigin, rateLimit, requestAddress } = await import("@/lib/rate-limit.server");
+        if (!isSameOrigin(request)) {
+          return Response.json({ success: false, error: "cross_origin_request" }, { status: 403 });
+        }
+        const requestLimit = rateLimit(`callback:${requestAddress(request)}`, 12, 60_000);
+        if (!requestLimit.allowed) {
+          return Response.json(
+            {
+              success: false,
+              error: "rate_limited",
+              retryAfterSeconds: requestLimit.retryAfterSeconds,
+            },
+            { status: 429, headers: { "Retry-After": String(requestLimit.retryAfterSeconds) } },
+          );
+        }
         const { getDb, snowflakeToDate, checkIp, clientIp } =
           await import("@/lib/db/client.server");
         const { auditLogs, suspiciousAttempts, verifyTokens } = await import("@/lib/db/schema");
@@ -34,6 +51,13 @@ export const Route = createFileRoute("/api/callback")({
           return Response.json({ success: false }, { status: 400 });
         }
         const { token, discordId, discordTag, discordAvatar, passed } = parsed.data;
+        if (inFlightCallbacks.has(token)) {
+          return Response.json(
+            { success: false, error: "verification_in_progress" },
+            { status: 409 },
+          );
+        }
+        inFlightCallbacks.add(token);
         try {
           const db = getDb();
           const row = (
@@ -51,6 +75,10 @@ export const Route = createFileRoute("/api/callback")({
           if (!row || row.used || row.expiresAt.getTime() < Date.now() || !row.discordId) {
             console.error("[callback] Token missing, expired, used, or lacks OAuth identity");
             return Response.json({ success: false }, { status: 400 });
+          }
+          if (discordId && discordId !== row.discordId) {
+            console.warn("[callback] Discord identity mismatch for verification token");
+            return Response.json({ success: false, error: "identity_mismatch" }, { status: 403 });
           }
           if (row.status === "locked" || (row.attempts ?? 0) >= 3) {
             return Response.json(
@@ -260,7 +288,7 @@ export const Route = createFileRoute("/api/callback")({
               locked,
             };
             try {
-              console.log("[callback] Sending result to bot:", botWebhookUrl);
+              console.log("[callback] Sending result to bot callback");
               const res = await fetch(botWebhookUrl, {
                 method: "POST",
                 headers: {
@@ -343,6 +371,8 @@ export const Route = createFileRoute("/api/callback")({
         } catch (e) {
           console.error("[callback] Failed to process verification:", e);
           return Response.json({ success: false }, { status: 500 });
+        } finally {
+          inFlightCallbacks.delete(token);
         }
       },
     },

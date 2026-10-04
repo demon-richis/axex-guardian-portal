@@ -8,6 +8,21 @@ if (process.env["BOT_WEBHOOK_URL"]) {
   console.warn("[portal] BOT_WEBHOOK_URL is not configured");
 }
 
+for (const name of [
+  "DATABASE_URL",
+  "AXEX_BOT_API_KEY",
+  "BOT_WEBHOOK_URL",
+  "DISCORD_CLIENT_ID",
+  "DISCORD_CLIENT_SECRET",
+  "DISCORD_REDIRECT_URI",
+  "PROXYCHECK_API_KEY",
+  "INTELLIGENCE_URL",
+  "INTELLIGENCE_API_KEY",
+]) {
+  if (!process.env[name])
+    console.warn(`[portal] ${name} is not configured; related functionality may be unavailable`);
+}
+
 const errorMiddleware = createMiddleware().server(async ({ next }) => {
   try {
     return await next();
@@ -30,6 +45,16 @@ const csrfMiddleware = createCsrfMiddleware({
   filter: (ctx) => ctx.handlerType === "serverFn",
 });
 
+const securityHeadersMiddleware = createMiddleware().server(async ({ next }) => {
+  const response = (await next()) as unknown as Response;
+  response.headers.set("X-Content-Type-Options", "nosniff");
+  response.headers.set("X-Frame-Options", "DENY");
+  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+  response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+  response.headers.set("Cross-Origin-Opener-Policy", "same-origin");
+  return response;
+});
+
 export const startInstance = createStart(() => ({
-  requestMiddleware: [errorMiddleware, csrfMiddleware],
+  requestMiddleware: [errorMiddleware, securityHeadersMiddleware, csrfMiddleware],
 }));

@@ -271,6 +271,7 @@ export const Route = createFileRoute("/api/callback")({
           } else {
             const botPayload = {
               guildId: row.guildId,
+              referenceId: row.referenceId,
               userId: row.discordId,
               discordId: discordId ?? row.discordId,
               discordTag: discordTag ?? row.discordTag ?? row.discordUsername,

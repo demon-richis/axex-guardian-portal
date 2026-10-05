@@ -45,16 +45,6 @@ const csrfMiddleware = createCsrfMiddleware({
   filter: (ctx) => ctx.handlerType === "serverFn",
 });
 
-const securityHeadersMiddleware = createMiddleware().server(async ({ next }) => {
-  const response = (await next()) as unknown as Response;
-  response.headers.set("X-Content-Type-Options", "nosniff");
-  response.headers.set("X-Frame-Options", "DENY");
-  response.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
-  response.headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-  response.headers.set("Cross-Origin-Opener-Policy", "same-origin");
-  return response;
-});
-
 export const startInstance = createStart(() => ({
-  requestMiddleware: [errorMiddleware, securityHeadersMiddleware, csrfMiddleware],
+  requestMiddleware: [errorMiddleware, csrfMiddleware],
 }));

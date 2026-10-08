@@ -4,7 +4,7 @@
   "outputDirectory": "dist/client",
   "functions": {
     "api/index.mjs": {
-      "includeFiles": ["dist/server/**", "dist/client/**"]
+      "includeFiles": "dist/server/**"
     }
   },
   "rewrites": [

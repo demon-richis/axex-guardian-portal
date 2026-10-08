@@ -374,8 +374,13 @@ function VerifyPage() {
       clickMs: number,
       timeout = false,
       failureReason?: "WRONG_ANSWER" | "TIMEOUT" | "BOT_DETECTED" | "VPN_BLOCKED",
+      honeypotTriggered = false,
     ) => {
-      console.log("[verify] Submitting verification result:", { passed, timeout });
+      console.log("[verify] Submitting verification result:", {
+        passed,
+        timeout,
+        honeypotTriggered,
+      });
       if (demoMode) {
         console.log("[verify] Demo result accepted locally");
         return { success: true, passed };
@@ -397,6 +402,7 @@ function VerifyPage() {
           clickMs,
           timeout,
           failureReason,
+          honeypotTriggered,
         }),
       }).catch((requestError: unknown) => {
         console.error("[verify] Callback request failed:", requestError);
@@ -424,9 +430,9 @@ function VerifyPage() {
   );
 
   const complete = useCallback(
-    async (clickMs: number) => {
+    async (clickMs: number, honeypotTriggered = false) => {
       console.log("[verify] Step 2 passed; submitting completion");
-      const result = await submitAttempt(true, clickMs);
+      const result = await submitAttempt(true, clickMs, false, undefined, honeypotTriggered);
       if (result?.success && result.passed) {
         console.log("[verify] Completion accepted; moving to Step 3");
         track(token, "captcha_passed");
@@ -482,14 +488,21 @@ function VerifyPage() {
       clickMs: number,
       timeout = false,
       failureReason: "WRONG_ANSWER" | "TIMEOUT" = timeout ? "TIMEOUT" : "WRONG_ANSWER",
+      honeypotTriggered = false,
     ) => {
       const nextAttempts = attempts + (timeout ? 0 : 1);
-      console.log("[verify] Step 2 failed:", { timeout, nextAttempts });
+      console.log("[verify] Step 2 failed:", { timeout, nextAttempts, honeypotTriggered });
       if (!timeout) {
         writeAttemptCount(attemptKey, nextAttempts);
         setAttempts(nextAttempts);
       }
-      const result = await submitAttempt(false, clickMs, timeout, failureReason);
+      const result = await submitAttempt(
+        false,
+        clickMs,
+        timeout,
+        honeypotTriggered ? "BOT_DETECTED" : failureReason,
+        honeypotTriggered,
+      );
       track(token, timeout ? "verification_error" : "captcha_failed");
       const serverAttempts = result?.attempts ?? nextAttempts;
       if (result?.cooldownUntil && serverAttempts < 3) {
@@ -1011,12 +1024,17 @@ function Captcha({
   user: NonNullable<TokenInfo["discordUser"]>;
   ageDays: number;
   question: (typeof QUESTIONS)[number];
-  onPass: (clickMs: number) => void;
-  onFail: (clickMs: number, reason?: "WRONG_ANSWER" | "TIMEOUT") => Promise<void>;
-  onTimeout: (clickMs: number) => void;
+  onPass: (clickMs: number, honeypotTriggered?: boolean) => void;
+  onFail: (
+    clickMs: number,
+    reason?: "WRONG_ANSWER" | "TIMEOUT",
+    honeypotTriggered?: boolean,
+  ) => Promise<void>;
+  onTimeout: (clickMs: number, honeypotTriggered?: boolean) => void;
 }) {
   const [left, setLeft] = useState(60);
   const [flash, setFlash] = useState<{ opt: string; ok: boolean } | null>(null);
+  const [honeypotTriggered, setHoneypotTriggered] = useState(false);
   const shake = useAnimationControls();
   const done = useRef(false);
   const startedAt = useRef(Date.now());
@@ -1028,20 +1046,20 @@ function Captcha({
   useEffect(() => {
     if (left === 0 && !done.current) {
       done.current = true;
-      onTimeout(Date.now() - startedAt.current);
+      onTimeout(Date.now() - startedAt.current, honeypotTriggered);
     }
-  }, [left, onTimeout]);
+  }, [honeypotTriggered, left, onTimeout]);
 
   const pick = (opt: string) => {
     if (done.current) return;
     if (opt === question.answer) {
       done.current = true;
       setFlash({ opt, ok: true });
-      setTimeout(() => onPass(Date.now() - startedAt.current), 650);
+      setTimeout(() => onPass(Date.now() - startedAt.current, honeypotTriggered), 650);
     } else {
       setFlash({ opt, ok: false });
       void shake.start({ x: [-8, 8, -8, 8, 0], transition: { duration: 0.4 } });
-      void onFail(Date.now() - startedAt.current, "WRONG_ANSWER");
+      void onFail(Date.now() - startedAt.current, "WRONG_ANSWER", honeypotTriggered);
       setTimeout(() => setFlash(null), 500);
     }
   };
@@ -1052,6 +1070,34 @@ function Captcha({
 
   return (
     <motion.div animate={shake} className="space-y-4">
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute -left-[10000px] top-auto h-px w-px overflow-hidden"
+      >
+        <label htmlFor="website_url">Website</label>
+        <input
+          id="website_url"
+          name="website_url"
+          type="url"
+          tabIndex={-1}
+          autoComplete="off"
+          onFocus={() => setHoneypotTriggered(true)}
+          onChange={() => setHoneypotTriggered(true)}
+        />
+        <label htmlFor="company_name">Company</label>
+        <input
+          id="company_name"
+          name="company_name"
+          type="text"
+          tabIndex={-1}
+          autoComplete="organization"
+          onFocus={() => setHoneypotTriggered(true)}
+          onChange={() => setHoneypotTriggered(true)}
+        />
+        <button type="button" tabIndex={-1} onClick={() => setHoneypotTriggered(true)}>
+          Skip verification
+        </button>
+      </div>
       <div>
         <div className="mb-1.5 flex justify-between text-[11px] text-muted-foreground">
           <span>Time remaining</span>

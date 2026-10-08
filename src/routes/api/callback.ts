@@ -20,6 +20,8 @@ const Body = z.object({
   failureReason: z.enum(["WRONG_ANSWER", "TIMEOUT", "BOT_DETECTED", "VPN_BLOCKED"]).optional(),
   timeout: z.boolean().optional(),
   attempts: z.number().int().positive().optional(),
+  honeypotTriggered: z.boolean().optional(),
+  honeypot: z.string().max(200).optional(),
 });
 
 export const Route = createFileRoute("/api/callback")({
@@ -125,6 +127,10 @@ export const Route = createFileRoute("/api/callback")({
             (Date.now() - snowflakeToDate(row.discordId).getTime()) / 86400000,
           );
           const clickMs = parsed.data.clickMs ?? null;
+          const honeypotTriggered = Boolean(
+            parsed.data.honeypotTriggered || parsed.data.honeypot?.trim(),
+          );
+          const botDetected = honeypotTriggered || (clickMs !== null && clickMs < 1500);
           const attempts = (row.attempts ?? 0) + 1;
           const sameIpUsers = observedIp
             ? Number(
@@ -135,30 +141,34 @@ export const Route = createFileRoute("/api/callback")({
                 ).rows[0]?.["count"] ?? 0,
               )
             : 0;
-          const automaticReason = vpnDetected
-            ? "VPN or proxy detected"
-            : accountAgeDays < 3
-              ? "New Discord account"
-              : clickMs !== null && clickMs < 800
-                ? "Unusually fast response"
-                : clickMs !== null && clickMs > 58000
-                  ? "Response near timeout"
-                  : attempts >= 2
-                    ? "Repeated verification attempt"
-                    : sameIpUsers >= 3
-                      ? "Shared IP used by multiple users"
-                      : null;
+          const automaticReason = honeypotTriggered
+            ? "Hidden verification trap activated"
+            : vpnDetected
+              ? "VPN or proxy detected"
+              : accountAgeDays < 3
+                ? "New Discord account"
+                : clickMs !== null && clickMs < 800
+                  ? "Unusually fast response"
+                  : clickMs !== null && clickMs > 58000
+                    ? "Response near timeout"
+                    : attempts >= 2
+                      ? "Repeated verification attempt"
+                      : sameIpUsers >= 3
+                        ? "Shared IP used by multiple users"
+                        : null;
           const flagged = Boolean(parsed.data.flagged || automaticReason);
           const event: "VERIFIED" | "VPN_BLOCKED" | "BOT_DETECTED" | "WRONG_ANSWER" | "TIMEOUT" =
-            passed
-              ? "VERIFIED"
+            botDetected
+              ? "BOT_DETECTED"
               : vpnDetected
                 ? "VPN_BLOCKED"
-                : parsed.data.timeout || (clickMs !== null && clickMs > 58000)
-                  ? "TIMEOUT"
-                  : clickMs !== null && clickMs < 1500
-                    ? "BOT_DETECTED"
-                    : "WRONG_ANSWER";
+                : passed
+                  ? "VERIFIED"
+                  : parsed.data.timeout || (clickMs !== null && clickMs > 58000)
+                    ? "TIMEOUT"
+                    : clickMs !== null && clickMs < 1500
+                      ? "BOT_DETECTED"
+                      : "WRONG_ANSWER";
           const reason =
             parsed.data.flagReason ??
             automaticReason ??
@@ -171,7 +181,7 @@ export const Route = createFileRoute("/api/callback")({
                   : event === "VPN_BLOCKED"
                     ? "VPN or proxy detected"
                     : null);
-          const finalPassed = passed && !vpnDetected && accountAgeDays >= 3;
+          const finalPassed = passed && !vpnDetected && !botDetected && accountAgeDays >= 3;
           const nextAttempts = attempts;
           const cooldownUntil = finalPassed
             ? null
@@ -279,6 +289,8 @@ export const Route = createFileRoute("/api/callback")({
               passed: finalPassed,
               vpnDetected,
               vpnType,
+              botDetected,
+              honeypotTriggered,
               accountAgeDays,
               clickMs,
               flagged,
@@ -358,7 +370,13 @@ export const Route = createFileRoute("/api/callback")({
             clickMs,
             flagged,
             flagReason: reason,
-            metadata: { attempts, passed: finalPassed, clientIp: submittedIp || null },
+            metadata: {
+              attempts,
+              passed: finalPassed,
+              clientIp: submittedIp || null,
+              botDetected,
+              honeypotTriggered,
+            },
           });
           return Response.json({
             success: true,

@@ -3,6 +3,17 @@ import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 const inFlightCallbacks = new Set<string>();
+const BOT_CALLBACK_TIMEOUT_MS = 8_000;
+
+async function fetchBotCallback(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), BOT_CALLBACK_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 const Body = z.object({
   token: z.string().min(1).max(200),
@@ -302,7 +313,7 @@ export const Route = createFileRoute("/api/callback")({
             };
             try {
               console.log("[callback] Sending result to bot callback");
-              const res = await fetch(botWebhookUrl, {
+              const res = await fetchBotCallback(botWebhookUrl, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",

@@ -130,6 +130,22 @@ async function telemetryEvent(token: string, event: string): Promise<void> {
   }
 }
 
+const VERIFICATION_REQUEST_TIMEOUT_MS = 25_000;
+
+async function fetchVerification(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+  timeoutMs = VERIFICATION_REQUEST_TIMEOUT_MS,
+): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
 const fade = {
   initial: { opacity: 0, y: 10 },
   animate: { opacity: 1, y: 0 },
@@ -386,7 +402,7 @@ function VerifyPage() {
         return { success: true, passed };
       }
       const u = info?.discordUser;
-      const response = await fetch("/api/callback", {
+      const response = await fetchVerification("/api/callback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -447,9 +463,15 @@ function VerifyPage() {
           let completed = false;
           for (let i = 0; i < 20; i += 1) {
             await new Promise((resolve) => window.setTimeout(resolve, 1000));
-            const statusResponse = await fetch(`/api/verify/${encodeURIComponent(token)}`, {
-              cache: "no-store",
+            const statusResponse = await fetchVerification(
+              `/api/verify/${encodeURIComponent(token)}`,
+              { cache: "no-store" },
+              5_000,
+            ).catch((statusError: unknown) => {
+              console.error("[verify] Status poll failed:", statusError);
+              return null;
             });
+            if (!statusResponse?.ok) continue;
             const status = (await statusResponse.json()) as TokenInfo & { valid?: boolean };
             if (status.botError) {
               console.error("[verify] Bot acknowledgement error:", status.botError);
@@ -463,9 +485,14 @@ function VerifyPage() {
             }
           }
           if (!completed) {
-            const finalStatus = await fetch(`/api/verify/${encodeURIComponent(token)}`, {
-              cache: "no-store",
-            })
+            const finalStatus = await fetchVerification(
+              `/api/verify/${encodeURIComponent(token)}`,
+              { cache: "no-store" },
+              5_000,
+            )
+              .then(
+                (response) => (response.ok ? response.json() : null) as Promise<TokenInfo | null>,
+              )
               .then((response) => response.json() as Promise<TokenInfo>)
               .catch(() => null);
             if (finalStatus)

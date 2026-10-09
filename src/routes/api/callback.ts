@@ -312,7 +312,20 @@ export const Route = createFileRoute("/api/callback")({
               });
               console.log("[callback] Bot webhook response:", res.status);
               if (!res.ok) {
-                console.error("[callback] Bot webhook returned an error status:", res.status);
+                const botErrorBody = (await res.json().catch(() => null)) as {
+                  error?: string;
+                  code?: string;
+                  detail?: string;
+                } | null;
+                const botError =
+                  [botErrorBody?.code, botErrorBody?.error, botErrorBody?.detail]
+                    .filter(Boolean)
+                    .join(": ") || `Bot returned ${res.status}`;
+                console.error(
+                  "[callback] Bot webhook returned an error status:",
+                  res.status,
+                  botError,
+                );
                 await db
                   .update(verifyTokens)
                   .set({
@@ -323,7 +336,7 @@ export const Route = createFileRoute("/api/callback")({
                         : vpnDetected
                           ? "blocked"
                           : "failed",
-                    botError: `Bot returned ${res.status}`,
+                    botError: botError.slice(0, 500),
                   })
                   .where(eq(verifyTokens.token, token));
               } else {

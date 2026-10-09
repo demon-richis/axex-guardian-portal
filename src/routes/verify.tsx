@@ -424,6 +424,9 @@ function VerifyPage() {
         failureReason?: string | null;
         locked?: boolean;
         error?: string;
+        botError?: string | null;
+        code?: string;
+        detail?: string;
       } | null;
     },
     [demoMode, info, token],
@@ -442,12 +445,15 @@ function VerifyPage() {
         } else {
           setPhase("pending");
           let completed = false;
-          for (let i = 0; i < 8; i += 1) {
+          for (let i = 0; i < 20; i += 1) {
             await new Promise((resolve) => window.setTimeout(resolve, 1000));
             const statusResponse = await fetch(`/api/verify/${encodeURIComponent(token)}`, {
               cache: "no-store",
             });
             const status = (await statusResponse.json()) as TokenInfo & { valid?: boolean };
+            if (status.botError) {
+              console.error("[verify] Bot acknowledgement error:", status.botError);
+            }
             if (status.status === "completed") {
               setInfo((current) => (current ? { ...current, ...status } : current));
               track(token, "verification_completed");
@@ -456,7 +462,16 @@ function VerifyPage() {
               break;
             }
           }
-          if (!completed) fail("bot");
+          if (!completed) {
+            const finalStatus = await fetch(`/api/verify/${encodeURIComponent(token)}`, {
+              cache: "no-store",
+            })
+              .then((response) => response.json() as Promise<TokenInfo>)
+              .catch(() => null);
+            if (finalStatus)
+              setInfo((current) => (current ? { ...current, ...finalStatus } : current));
+            fail("bot");
+          }
         }
       } else {
         console.error("[verify] Completion rejected");
@@ -550,6 +565,11 @@ function VerifyPage() {
                 referenceId={info?.referenceId ?? null}
                 onRetry={errorKind === "network" ? runIpCheck : undefined}
               />
+              {errorKind === "bot" && info?.botError && (
+                <p className="mt-3 rounded-lg border border-border/70 bg-background/30 px-3 py-2 text-left text-[11px] text-muted-foreground">
+                  Diagnostic: {info.botError}
+                </p>
+              )}
             </motion.div>
           )}
 

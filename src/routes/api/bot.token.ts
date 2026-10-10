@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { and, eq, gt, inArray, lt } from "drizzle-orm";
 import { z } from "zod";
 
 const Body = z.object({
@@ -28,12 +29,44 @@ export const Route = createFileRoute("/api/bot/token")({
         try {
           const crypto = await import("node:crypto");
           const { verifyTokens } = await import("@/lib/db/schema");
+          const { auditLogs } = await import("@/lib/db/schema");
           const { getDb } = await import("@/lib/db/client.server");
           const { token, userId, guildId, guildName, guildMemberCount, expiresAt } = parsed.data;
+          const db = getDb();
+          const now = new Date();
+          const retentionDays = Math.min(
+            365,
+            Math.max(7, Number(process.env.AXEX_RETENTION_DAYS || 90)),
+          );
+          const retentionCutoff = new Date(now.getTime() - retentionDays * 86_400_000);
+
+          await db.delete(verifyTokens).where(lt(verifyTokens.createdAt, retentionCutoff));
+          await db.delete(auditLogs).where(lt(auditLogs.createdAt, retentionCutoff));
+
+          const active = await db
+            .select({ token: verifyTokens.token, referenceId: verifyTokens.referenceId })
+            .from(verifyTokens)
+            .where(
+              and(
+                eq(verifyTokens.userId, userId),
+                eq(verifyTokens.guildId, guildId),
+                gt(verifyTokens.expiresAt, now),
+                inArray(verifyTokens.status, ["pending", "bot_update_pending"]),
+              ),
+            )
+            .limit(1);
+          if (active[0]) {
+            return Response.json({
+              success: true,
+              reused: true,
+              token: active[0].token,
+              referenceId: active[0].referenceId,
+            });
+          }
           const referenceId = `AX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
           console.log("[bot/token] Received token:", `${token.slice(0, 8)}…`);
 
-          await getDb()
+          await db
             .insert(verifyTokens)
             .values({
               token,

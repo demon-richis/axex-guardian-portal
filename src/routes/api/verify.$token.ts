@@ -21,6 +21,37 @@ export const Route = createFileRoute("/api/verify/$token")({
             console.log("[verify/token] Result:", result);
             return Response.json(result);
           }
+          // A completed token is permanently finished. It must remain readable
+          // so reopening the link shows the completed state instead of starting
+          // OAuth and verification again, even after the original expiry time.
+          if (row.status === "completed") {
+            const result = {
+              valid: true,
+              completed: true,
+              userId: row.userId,
+              guildId: row.guildId,
+              guildName: row.guildName,
+              guildMemberCount: row.guildMemberCount ?? 0,
+              expiresAt: row.expiresAt.toISOString(),
+              status: row.status,
+              referenceId: row.referenceId,
+              attempts: row.attempts,
+              failureReason: row.failureReason,
+              botAcknowledged: Boolean(row.botAcknowledgedAt),
+              botError: row.botError,
+              used: row.used,
+              discordUser: row.discordId
+                ? {
+                    id: row.discordId,
+                    username: row.discordUsername,
+                    avatar: row.discordAvatar,
+                    createdAt: snowflakeToDate(row.discordId).toISOString(),
+                  }
+                : null,
+            } as const;
+            console.log("[verify/token] Completed token reopened:", row.referenceId);
+            return Response.json(result);
+          }
           if (row.status === "locked" || (row.attempts ?? 0) >= 3) {
             const result = {
               valid: false,

@@ -77,6 +77,7 @@ type TokenInfo = {
   discordUser: { id: string; username: string; avatar: string | null; createdAt: string } | null;
   expiresAt?: string;
   status?: string;
+  completed?: boolean;
   referenceId?: string | null;
   attempts?: number;
   cooldownUntil?: string | null;
@@ -359,6 +360,11 @@ function VerifyPage() {
         setAttempts(data.attempts ?? 0);
         await minimumPreparation;
         if (!active) return;
+        if (data.completed || data.status === "completed") {
+          track(token, "verification_completed");
+          setPhase("done");
+          return;
+        }
         if (error) return fail(error === "auth" ? "auth" : "generic");
         if (auth && data.discordUser) {
           console.log("[verify] OAuth complete: identity found; moving from Step 1 to Step 2");

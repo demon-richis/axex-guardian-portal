@@ -25,7 +25,7 @@ export const Route = createFileRoute("/api/flag")({
           console.error("[flag] Invalid request body");
           return Response.json({ success: false }, { status: 400 });
         }
-        console.log("[flag] Recording suspicious attempt for guild:", parsed.data.guildId);
+        console.log("[flag] Recording suspicious attempt");
         try {
           const { auditLogs, suspiciousAttempts } = await import("@/lib/db/schema");
           const db = (await import("@/lib/db/client.server")).getDb();
@@ -77,7 +77,7 @@ export const Route = createFileRoute("/api/flag")({
             attemptCount: attempt?.attemptCount ?? 1,
           });
         } catch (error) {
-          console.error("[flag] Failed:", error);
+          console.error("[flag] Failed:", error instanceof Error ? error.name : "unknown");
           return Response.json({ success: false }, { status: 500 });
         }
       },

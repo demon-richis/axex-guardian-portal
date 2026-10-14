@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { and, eq, gt, inArray, lt } from "drizzle-orm";
 import { z } from "zod";
+import { isReferenceIdCollision } from "../../lib/reference-id.server.ts";
 
 const Body = z.object({
   token: z.string().min(1).max(200),
@@ -36,7 +37,7 @@ export const Route = createFileRoute("/api/bot/token")({
           const now = new Date();
           const retentionDays = Math.min(
             365,
-            Math.max(7, Number(process.env.AXEX_RETENTION_DAYS || 90)),
+            Math.max(7, Number(process.env["AXEX_RETENTION_DAYS"] || 90)),
           );
           const retentionCutoff = new Date(now.getTime() - retentionDays * 86_400_000);
 
@@ -63,28 +64,74 @@ export const Route = createFileRoute("/api/bot/token")({
               referenceId: active[0].referenceId,
             });
           }
-          const referenceId = `AX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
-          console.log("[bot/token] Received token:", `${token.slice(0, 8)}…`);
+          for (let attempt = 0; attempt < 10; attempt += 1) {
+            const referenceId = `AX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+            try {
+              const inserted = await db
+                .insert(verifyTokens)
+                .values({
+                  token,
+                  userId,
+                  guildId,
+                  guildName: guildName || "Unknown",
+                  guildMemberCount: guildMemberCount || 0,
+                  expiresAt: new Date(expiresAt),
+                  used: false,
+                  status: "pending",
+                  referenceId,
+                })
+                .onConflictDoNothing({ target: verifyTokens.token })
+                .returning({ token: verifyTokens.token, referenceId: verifyTokens.referenceId });
+              if (inserted[0]) {
+                console.log("[bot/token] Saved successfully");
+                return Response.json({
+                  success: true,
+                  token,
+                  referenceId: inserted[0].referenceId,
+                });
+              }
 
-          await db
-            .insert(verifyTokens)
-            .values({
-              token,
-              userId,
-              guildId,
-              guildName: guildName || "Unknown",
-              guildMemberCount: guildMemberCount || 0,
-              expiresAt: new Date(expiresAt),
-              used: false,
-              status: "pending",
-              referenceId,
-            })
-            .onConflictDoNothing();
-
-          console.log("[bot/token] Saved successfully");
-          return Response.json({ success: true, token, referenceId });
+              const existingToken = (
+                await db
+                  .select({
+                    referenceId: verifyTokens.referenceId,
+                    userId: verifyTokens.userId,
+                    guildId: verifyTokens.guildId,
+                    expiresAt: verifyTokens.expiresAt,
+                    status: verifyTokens.status,
+                  })
+                  .from(verifyTokens)
+                  .where(eq(verifyTokens.token, token))
+                  .limit(1)
+              )[0];
+              if (
+                existingToken?.userId === userId &&
+                existingToken.guildId === guildId &&
+                existingToken.expiresAt.getTime() > now.getTime() &&
+                ["pending", "bot_update_pending"].includes(existingToken.status)
+              ) {
+                return Response.json({
+                  success: true,
+                  reused: true,
+                  token,
+                  referenceId: existingToken.referenceId,
+                });
+              }
+              return Response.json(
+                { error: "Token conflicts with an existing verification" },
+                { status: 409 },
+              );
+            } catch (error) {
+              if (!isReferenceIdCollision(error)) throw error;
+            }
+          }
+          console.error("[bot/token] Could not allocate a unique verification reference");
+          return Response.json(
+            { error: "Could not allocate verification reference" },
+            { status: 503 },
+          );
         } catch (error) {
-          console.error("[bot/token] Error:", error);
+          console.error("[bot/token] Error:", error instanceof Error ? error.name : "unknown");
           return Response.json({ error: "Internal server error" }, { status: 500 });
         }
       },

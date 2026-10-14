@@ -5,7 +5,7 @@ export const Route = createFileRoute("/api/audit/$guildId")({
   server: {
     handlers: {
       GET: async ({ params, request }) => {
-        console.log("[audit] Request received for guild:", params.guildId);
+        console.log("[audit] Request received");
         const { validateApiKey } = await import("@/lib/api-auth.server");
         const authError = validateApiKey(request);
         if (authError) return authError;
@@ -31,7 +31,7 @@ export const Route = createFileRoute("/api/audit/$guildId")({
           console.log("[audit] Returned entries:", logs.length);
           return Response.json({ success: true, logs });
         } catch (error) {
-          console.error("[audit] Query failed:", error);
+          console.error("[audit] Query failed:", error instanceof Error ? error.name : "unknown");
           return Response.json({ success: false }, { status: 500 });
         }
       },

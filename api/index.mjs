@@ -40,7 +40,7 @@ export default async function handler(request, response) {
     if (cookies?.length) response.setHeader("set-cookie", cookies);
     response.send(Buffer.from(await result.arrayBuffer()));
   } catch (error) {
-    console.error("[vercel] Request failed:", error);
+    console.error("[vercel] Request failed:", error instanceof Error ? error.name : "unknown");
     response.status(500).send("Internal Server Error");
   }
 }

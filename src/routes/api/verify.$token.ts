@@ -5,7 +5,6 @@ export const Route = createFileRoute("/api/verify/$token")({
   server: {
     handlers: {
       GET: async ({ params }) => {
-        console.log("[verify/token] Looking up token:", `${params.token.slice(0, 8)}…`);
         const { getDb, snowflakeToDate } = await import("@/lib/db/client.server");
         const { verifyTokens } = await import("@/lib/db/schema");
         try {
@@ -18,7 +17,6 @@ export const Route = createFileRoute("/api/verify/$token")({
           const row = rows[0];
           if (!row) {
             const result = { valid: false, reason: "invalid" } as const;
-            console.log("[verify/token] Result:", result);
             return Response.json(result);
           }
           // A completed token is permanently finished. It must remain readable
@@ -49,8 +47,33 @@ export const Route = createFileRoute("/api/verify/$token")({
                   }
                 : null,
             } as const;
-            console.log("[verify/token] Completed token reopened:", row.referenceId);
             return Response.json(result);
+          }
+          if (row.status === "bot_update_pending") {
+            return Response.json({
+              valid: true,
+              pendingPassed: Boolean(row.completedAt),
+              userId: row.userId,
+              guildId: row.guildId,
+              guildName: row.guildName,
+              guildMemberCount: row.guildMemberCount ?? 0,
+              expiresAt: row.expiresAt.toISOString(),
+              status: row.status,
+              referenceId: row.referenceId,
+              attempts: row.attempts,
+              failureReason: row.failureReason,
+              botAcknowledged: Boolean(row.botAcknowledgedAt),
+              botError: row.botError,
+              used: row.used,
+              discordUser: row.discordId
+                ? {
+                    id: row.discordId,
+                    username: row.discordUsername,
+                    avatar: row.discordAvatar,
+                    createdAt: snowflakeToDate(row.discordId).toISOString(),
+                  }
+                : null,
+            });
           }
           if (row.status === "locked" || (row.attempts ?? 0) >= 3) {
             const result = {
@@ -60,7 +83,6 @@ export const Route = createFileRoute("/api/verify/$token")({
               failureReason: row.failureReason,
               referenceId: row.referenceId,
             } as const;
-            console.log("[verify/token] Result:", result);
             return Response.json(result);
           }
           if (row.cooldownUntil && row.cooldownUntil.getTime() > Date.now()) {
@@ -72,17 +94,14 @@ export const Route = createFileRoute("/api/verify/$token")({
               failureReason: row.failureReason,
               referenceId: row.referenceId,
             } as const;
-            console.log("[verify/token] Result:", result);
             return Response.json(result);
           }
           if (row.used && !["completed", "bot_update_pending"].includes(row.status)) {
             const result = { valid: false, reason: "used" } as const;
-            console.log("[verify/token] Result:", result);
             return Response.json(result);
           }
           if (row.expiresAt.getTime() < Date.now()) {
             const result = { valid: false, reason: "expired" } as const;
-            console.log("[verify/token] Result:", result);
             return Response.json(result);
           }
           const result = {
@@ -109,10 +128,9 @@ export const Route = createFileRoute("/api/verify/$token")({
                 }
               : null,
           };
-          console.log("[verify/token] Result:", { valid: result.valid, guildId: result.guildId });
           return Response.json(result);
         } catch (e) {
-          console.error("[verify/token] Lookup failed:", e);
+          console.error("[verify/token] Lookup failed:", e instanceof Error ? e.name : "unknown");
           return Response.json({ valid: false, reason: "error" }, { status: 500 });
         }
       },

@@ -14,12 +14,14 @@ import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as SupportRouteImport } from './routes/support'
 import { Route as VerifyRouteImport } from './routes/verify'
 import { Route as ApiCallbackRouteImport } from './routes/api/callback'
+import { Route as ApiChallengeRouteImport } from './routes/api/challenge'
 import { Route as ApiCheckIpRouteImport } from './routes/api/check-ip'
 import { Route as ApiFlagRouteImport } from './routes/api/flag'
 import { Route as ApiTelemetryRouteImport } from './routes/api/telemetry'
 import { Route as ApiAuditGuildIdRouteImport } from './routes/api/audit.$guildId'
 import { Route as ApiAuthCallbackRouteImport } from './routes/api/auth.callback'
 import { Route as ApiAuthDiscordRouteImport } from './routes/api/auth.discord'
+import { Route as ApiBotOutboxRouteImport } from './routes/api/bot.outbox'
 import { Route as ApiBotTokenRouteImport } from './routes/api/bot.token'
 import { Route as ApiGuildGuildIdRouteImport } from './routes/api/guild.$guildId'
 import { Route as ApiGuildRegisterRouteImport } from './routes/api/guild.register'
@@ -52,6 +54,11 @@ const ApiCallbackRoute = ApiCallbackRouteImport.update({
   path: '/api/callback',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiChallengeRoute = ApiChallengeRouteImport.update({
+  id: '/api/challenge',
+  path: '/api/challenge',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiCheckIpRoute = ApiCheckIpRouteImport.update({
   id: '/api/check-ip',
   path: '/api/check-ip',
@@ -80,6 +87,11 @@ const ApiAuthCallbackRoute = ApiAuthCallbackRouteImport.update({
 const ApiAuthDiscordRoute = ApiAuthDiscordRouteImport.update({
   id: '/api/auth/discord',
   path: '/api/auth/discord',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiBotOutboxRoute = ApiBotOutboxRouteImport.update({
+  id: '/api/bot/outbox',
+  path: '/api/bot/outbox',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ApiBotTokenRoute = ApiBotTokenRouteImport.update({
@@ -119,12 +131,14 @@ export interface FileRoutesByFullPath {
   '/support': typeof SupportRoute
   '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
+  '/api/challenge': typeof ApiChallengeRoute
   '/api/check-ip': typeof ApiCheckIpRoute
   '/api/flag': typeof ApiFlagRoute
   '/api/telemetry': typeof ApiTelemetryRoute
   '/api/audit/$guildId': typeof ApiAuditGuildIdRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
   '/api/auth/discord': typeof ApiAuthDiscordRoute
+  '/api/bot/outbox': typeof ApiBotOutboxRoute
   '/api/bot/token': typeof ApiBotTokenRoute
   '/api/guild/$guildId': typeof ApiGuildGuildIdRoute
   '/api/guild/register': typeof ApiGuildRegisterRoute
@@ -138,12 +152,14 @@ export interface FileRoutesByTo {
   '/support': typeof SupportRoute
   '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
+  '/api/challenge': typeof ApiChallengeRoute
   '/api/check-ip': typeof ApiCheckIpRoute
   '/api/flag': typeof ApiFlagRoute
   '/api/telemetry': typeof ApiTelemetryRoute
   '/api/audit/$guildId': typeof ApiAuditGuildIdRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
   '/api/auth/discord': typeof ApiAuthDiscordRoute
+  '/api/bot/outbox': typeof ApiBotOutboxRoute
   '/api/bot/token': typeof ApiBotTokenRoute
   '/api/guild/$guildId': typeof ApiGuildGuildIdRoute
   '/api/guild/register': typeof ApiGuildRegisterRoute
@@ -158,12 +174,14 @@ export interface FileRoutesById {
   '/support': typeof SupportRoute
   '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
+  '/api/challenge': typeof ApiChallengeRoute
   '/api/check-ip': typeof ApiCheckIpRoute
   '/api/flag': typeof ApiFlagRoute
   '/api/telemetry': typeof ApiTelemetryRoute
   '/api/audit/$guildId': typeof ApiAuditGuildIdRoute
   '/api/auth/callback': typeof ApiAuthCallbackRoute
   '/api/auth/discord': typeof ApiAuthDiscordRoute
+  '/api/bot/outbox': typeof ApiBotOutboxRoute
   '/api/bot/token': typeof ApiBotTokenRoute
   '/api/guild/$guildId': typeof ApiGuildGuildIdRoute
   '/api/guild/register': typeof ApiGuildRegisterRoute
@@ -179,12 +197,14 @@ export interface FileRouteTypes {
     | '/support'
     | '/verify'
     | '/api/callback'
+    | '/api/challenge'
     | '/api/check-ip'
     | '/api/flag'
     | '/api/telemetry'
     | '/api/audit/$guildId'
     | '/api/auth/callback'
     | '/api/auth/discord'
+    | '/api/bot/outbox'
     | '/api/bot/token'
     | '/api/guild/$guildId'
     | '/api/guild/register'
@@ -198,12 +218,14 @@ export interface FileRouteTypes {
     | '/support'
     | '/verify'
     | '/api/callback'
+    | '/api/challenge'
     | '/api/check-ip'
     | '/api/flag'
     | '/api/telemetry'
     | '/api/audit/$guildId'
     | '/api/auth/callback'
     | '/api/auth/discord'
+    | '/api/bot/outbox'
     | '/api/bot/token'
     | '/api/guild/$guildId'
     | '/api/guild/register'
@@ -217,12 +239,14 @@ export interface FileRouteTypes {
     | '/support'
     | '/verify'
     | '/api/callback'
+    | '/api/challenge'
     | '/api/check-ip'
     | '/api/flag'
     | '/api/telemetry'
     | '/api/audit/$guildId'
     | '/api/auth/callback'
     | '/api/auth/discord'
+    | '/api/bot/outbox'
     | '/api/bot/token'
     | '/api/guild/$guildId'
     | '/api/guild/register'
@@ -237,12 +261,14 @@ export interface RootRouteChildren {
   SupportRoute: typeof SupportRoute
   VerifyRoute: typeof VerifyRoute
   ApiCallbackRoute: typeof ApiCallbackRoute
+  ApiChallengeRoute: typeof ApiChallengeRoute
   ApiCheckIpRoute: typeof ApiCheckIpRoute
   ApiFlagRoute: typeof ApiFlagRoute
   ApiTelemetryRoute: typeof ApiTelemetryRoute
   ApiAuditGuildIdRoute: typeof ApiAuditGuildIdRoute
   ApiAuthCallbackRoute: typeof ApiAuthCallbackRoute
   ApiAuthDiscordRoute: typeof ApiAuthDiscordRoute
+  ApiBotOutboxRoute: typeof ApiBotOutboxRoute
   ApiBotTokenRoute: typeof ApiBotTokenRoute
   ApiGuildGuildIdRoute: typeof ApiGuildGuildIdRoute
   ApiGuildRegisterRoute: typeof ApiGuildRegisterRoute
@@ -288,6 +314,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiCallbackRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/challenge': {
+      id: '/api/challenge'
+      path: '/api/challenge'
+      fullPath: '/api/challenge'
+      preLoaderRoute: typeof ApiChallengeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/check-ip': {
       id: '/api/check-ip'
       path: '/api/check-ip'
@@ -328,6 +361,13 @@ declare module '@tanstack/react-router' {
       path: '/api/auth/discord'
       fullPath: '/api/auth/discord'
       preLoaderRoute: typeof ApiAuthDiscordRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/bot/outbox': {
+      id: '/api/bot/outbox'
+      path: '/api/bot/outbox'
+      fullPath: '/api/bot/outbox'
+      preLoaderRoute: typeof ApiBotOutboxRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/api/bot/token': {
@@ -381,12 +421,14 @@ const rootRouteChildren: RootRouteChildren = {
   SupportRoute: SupportRoute,
   VerifyRoute: VerifyRoute,
   ApiCallbackRoute: ApiCallbackRoute,
+  ApiChallengeRoute: ApiChallengeRoute,
   ApiCheckIpRoute: ApiCheckIpRoute,
   ApiFlagRoute: ApiFlagRoute,
   ApiTelemetryRoute: ApiTelemetryRoute,
   ApiAuditGuildIdRoute: ApiAuditGuildIdRoute,
   ApiAuthCallbackRoute: ApiAuthCallbackRoute,
   ApiAuthDiscordRoute: ApiAuthDiscordRoute,
+  ApiBotOutboxRoute: ApiBotOutboxRoute,
   ApiBotTokenRoute: ApiBotTokenRoute,
   ApiGuildGuildIdRoute: ApiGuildGuildIdRoute,
   ApiGuildRegisterRoute: ApiGuildRegisterRoute,

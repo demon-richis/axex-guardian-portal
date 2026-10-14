@@ -1,5 +1,4 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { and, eq } from "drizzle-orm";
 
 export const Route = createFileRoute("/api/auth/callback")({
   server: {
@@ -7,7 +6,7 @@ export const Route = createFileRoute("/api/auth/callback")({
       GET: async ({ request }) => {
         console.log("[auth/callback] OAuth callback received");
         const { getDb, redirectUri } = await import("@/lib/db/client.server");
-        const { verifyTokens } = await import("@/lib/db/schema");
+        const { bindOAuthIdentity } = await import("@/lib/discord-identity.server");
         const url = new URL(request.url);
         const code = url.searchParams.get("code");
         const token = url.searchParams.get("state") ?? "";
@@ -47,19 +46,20 @@ export const Route = createFileRoute("/api/auth/callback")({
             global_name?: string | null;
             avatar: string | null;
           };
-          await getDb()
-            .update(verifyTokens)
-            .set({
-              discordId: user.id,
-              discordUsername: user.username,
-              discordTag: user.global_name ?? user.username,
-              discordAvatar: user.avatar,
-            })
-            .where(and(eq(verifyTokens.token, token), eq(verifyTokens.used, false)));
-          console.log("[auth/callback] OAuth identity stored for user:", user.id);
+          const binding = await bindOAuthIdentity(getDb(), token, {
+            id: user.id,
+            username: user.username,
+            globalName: user.global_name,
+            avatar: user.avatar,
+          });
+          if (!binding.success) {
+            console.error("[auth/callback] OAuth identity binding refused:", binding.reason);
+            return back("error=auth");
+          }
+          console.log("[auth/callback] OAuth identity matched the bot-issued target");
           return back("auth=1");
         } catch (e) {
-          console.error("[auth/callback] Failed:", e);
+          console.error("[auth/callback] Failed:", e instanceof Error ? e.name : "unknown");
           return back("error=auth");
         }
       },

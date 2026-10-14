@@ -9,6 +9,7 @@ import {
   timestamp,
   uniqueIndex,
 } from "drizzle-orm/pg-core";
+import { sql } from "drizzle-orm";
 
 export const guildConfigs = pgTable("guild_configs", {
   guildId: text("guild_id").primaryKey(),
@@ -23,34 +24,73 @@ export const guildConfigs = pgTable("guild_configs", {
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
 });
 
-export const verifyTokens = pgTable("verify_tokens", {
-  token: text("token").primaryKey(),
-  userId: text("user_id").notNull(),
-  guildId: text("guild_id").notNull(),
-  guildName: text("guild_name").notNull(),
-  guildMemberCount: integer("guild_member_count").default(0),
-  expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-  used: boolean("used").default(false),
-  status: text("status").default("pending").notNull(),
-  referenceId: text("reference_id"),
-  cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
-  failureReason: text("failure_reason"),
-  botAcknowledgedAt: timestamp("bot_acknowledged_at", { withTimezone: true }),
-  botError: text("bot_error"),
-  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-  // Filled by the OAuth callback so the final result can't be forged by the browser
-  discordId: text("discord_id"),
-  discordUsername: text("discord_username"),
-  discordTag: text("discord_tag"),
-  discordAvatar: text("discord_avatar"),
-  ipAddress: text("ip_address"),
-  vpnDetected: boolean("vpn_detected").default(false),
-  vpnType: text("vpn_type"),
-  attempts: integer("attempts").default(0).notNull(),
-  flagged: boolean("flagged").default(false).notNull(),
-  flagReason: text("flag_reason"),
-  completedAt: timestamp("completed_at", { withTimezone: true }),
-});
+export const verifyTokens = pgTable(
+  "verify_tokens",
+  {
+    token: text("token").primaryKey(),
+    userId: text("user_id").notNull(),
+    guildId: text("guild_id").notNull(),
+    guildName: text("guild_name").notNull(),
+    guildMemberCount: integer("guild_member_count").default(0),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    used: boolean("used").default(false),
+    status: text("status").default("pending").notNull(),
+    referenceId: text("reference_id"),
+    challengeId: text("challenge_id"),
+    challengeAnswerHash: text("challenge_answer_hash"),
+    challengePrompt: text("challenge_prompt"),
+    challengeOptions: jsonb("challenge_options").$type<string[]>(),
+    challengeExpiresAt: timestamp("challenge_expires_at", { withTimezone: true }),
+    challengeConsumedAt: timestamp("challenge_consumed_at", { withTimezone: true }),
+    challengeClaimId: text("challenge_claim_id"),
+    challengeSubmissionHash: text("challenge_submission_hash"),
+    cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
+    failureReason: text("failure_reason"),
+    botAcknowledgedAt: timestamp("bot_acknowledged_at", { withTimezone: true }),
+    botError: text("bot_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    // Filled by the OAuth callback so the final result can't be forged by the browser
+    discordId: text("discord_id"),
+    discordUsername: text("discord_username"),
+    discordTag: text("discord_tag"),
+    discordAvatar: text("discord_avatar"),
+    ipAddress: text("ip_address"),
+    vpnDetected: boolean("vpn_detected").default(false),
+    vpnType: text("vpn_type"),
+    attempts: integer("attempts").default(0).notNull(),
+    flagged: boolean("flagged").default(false).notNull(),
+    flagReason: text("flag_reason"),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("verify_tokens_reference_id_unique_idx")
+      .on(table.referenceId)
+      .where(sql`${table.referenceId} is not null`),
+  ],
+);
+
+export const botCallbackOutbox = pgTable(
+  "bot_callback_outbox",
+  {
+    id: serial("id").primaryKey(),
+    referenceId: text("reference_id").notNull(),
+    token: text("token").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    status: text("status").default("pending").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).defaultNow().notNull(),
+    claimId: text("claim_id"),
+    leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    lastError: text("last_error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+    deliveredAt: timestamp("delivered_at", { withTimezone: true }),
+  },
+  (table) => [
+    uniqueIndex("bot_callback_outbox_reference_id_unique_idx").on(table.referenceId),
+    index("bot_callback_outbox_due_idx").on(table.status, table.nextAttemptAt),
+  ],
+);
 
 export const auditLogs = pgTable(
   "audit_logs",

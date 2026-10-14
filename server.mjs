@@ -94,7 +94,7 @@ async function handle(request, response) {
     if (cookies?.length) response.setHeader("set-cookie", cookies);
     response.end(Buffer.from(await result.arrayBuffer()));
   } catch (error) {
-    console.error("[server] Request failed:", error);
+    console.error("[server] Request failed:", error instanceof Error ? error.name : "unknown");
     response.statusCode = 500;
     response.setHeader("Content-Type", "text/plain; charset=utf-8");
     response.end("Internal Server Error");
@@ -111,6 +111,30 @@ function readBody(request) {
 }
 
 await access(join(root, "dist", "server", "server.js"));
-http.createServer(handle).listen(port, host, () => {
+const server = http.createServer(handle);
+server.listen(port, host, () => {
   console.log(`[server] Axex Guardian Portal listening on http://${host}:${port}`);
 });
+
+let outboxTickInFlight = false;
+const outboxTimer = setInterval(async () => {
+  const apiKey = process.env.AXEX_BOT_API_KEY;
+  if (!apiKey || outboxTickInFlight) return;
+  outboxTickInFlight = true;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    await fetch(`http://127.0.0.1:${port}/api/bot/outbox`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-api-key": apiKey },
+      body: "{}",
+      signal: controller.signal,
+    });
+  } catch {
+    // The durable outbox remains pending; the next tick retries it.
+  } finally {
+    clearTimeout(timeout);
+    outboxTickInFlight = false;
+  }
+}, 15_000);
+outboxTimer.unref();

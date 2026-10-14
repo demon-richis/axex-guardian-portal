@@ -5,7 +5,7 @@ export const Route = createFileRoute("/api/guild/$guildId")({
   server: {
     handlers: {
       GET: async ({ params, request }) => {
-        console.log("[guild/config] Lookup:", params.guildId);
+        console.log("[guild/config] Lookup requested");
         const { validateApiKey } = await import("@/lib/api-auth.server");
         const authError = validateApiKey(request);
         if (authError) return authError;
@@ -32,13 +32,16 @@ export const Route = createFileRoute("/api/guild/$guildId")({
               .limit(1)
           )[0];
           if (!config) {
-            console.log("[guild/config] Not found:", params.guildId);
+            console.log("[guild/config] Not found");
             return Response.json({ success: false }, { status: 404 });
           }
-          console.log("[guild/config] Found:", params.guildId);
+          console.log("[guild/config] Found");
           return Response.json({ success: true, guild: config });
         } catch (error) {
-          console.error("[guild/config] Lookup failed:", error);
+          console.error(
+            "[guild/config] Lookup failed:",
+            error instanceof Error ? error.name : "unknown",
+          );
           return Response.json({ success: false }, { status: 500 });
         }
       },

@@ -9,7 +9,7 @@ export function requestAddress(request: Request): string {
 
 export function isSameOrigin(request: Request): boolean {
   const origin = request.headers.get("origin");
-  return !origin || origin === new URL(request.url).origin;
+  return Boolean(origin) && origin === new URL(request.url).origin;
 }
 
 export function rateLimit(

@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { AnimatePresence, motion, useAnimationControls } from "framer-motion";
+import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
 
@@ -26,50 +26,20 @@ export const Route = createFileRoute("/verify")({
   component: VerifyPage,
 });
 
-const QUESTIONS = [
-  {
-    q: "Which of these is NOT a number?",
-    options: ["Seven", "Four", "Blue", "Nine"],
-    answer: "Blue",
-  },
-  {
-    q: "Which of these is a fruit?",
-    options: ["Chair", "Apple", "Window", "Cloud"],
-    answer: "Apple",
-  },
-  {
-    q: "What comes after Monday?",
-    options: ["Sunday", "Friday", "Tuesday", "January"],
-    answer: "Tuesday",
-  },
-  {
-    q: "Which of these is NOT a color?",
-    options: ["Red", "Eleven", "Blue", "Green"],
-    answer: "Eleven",
-  },
-  { q: "How many sides does a triangle have?", options: ["4", "5", "3", "6"], answer: "3" },
-  {
-    q: "Which of these is an animal?",
-    options: ["Table", "River", "Eagle", "Thunder"],
-    answer: "Eagle",
-  },
-  {
-    q: "Which season comes after Winter?",
-    options: ["Autumn", "Summer", "Spring", "Storm"],
-    answer: "Spring",
-  },
-  {
-    q: "Which of these is NOT a planet?",
-    options: ["Mars", "Venus", "Cloud", "Saturn"],
-    answer: "Cloud",
-  },
-  { q: "What is 5 + 3?", options: ["7", "9", "6", "8"], answer: "8" },
-  {
-    q: "Which of these is a vehicle?",
-    options: ["Mountain", "Train", "Ocean", "Forest"],
-    answer: "Train",
-  },
-];
+type Challenge = {
+  challengeId: string;
+  prompt: string;
+  options: string[];
+  expiresAt: string;
+};
+
+const DEMO_CHALLENGE: Challenge = {
+  challengeId: "demo-local",
+  prompt: "What is 5 + 3?",
+  options: ["7", "9", "6", "8"],
+  expiresAt: "",
+};
+const DEMO_ANSWER = "8";
 
 type TokenInfo = {
   guildName: string;
@@ -78,6 +48,7 @@ type TokenInfo = {
   expiresAt?: string;
   status?: string;
   completed?: boolean;
+  pendingPassed?: boolean;
   referenceId?: string | null;
   attempts?: number;
   cooldownUntil?: string | null;
@@ -195,7 +166,7 @@ function VerifyPage() {
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [cooldownSeconds, setCooldownSeconds] = useState<number | null>(null);
   const [loadingStage, setLoadingStage] = useState(0);
-  const [question] = useState(() => QUESTIONS[Math.floor(Math.random() * QUESTIONS.length)]!);
+  const [challenge, setChallenge] = useState<Challenge | null>(null);
 
   const attemptKey = `axex:verify-attempts:${effectiveToken}`;
 
@@ -273,6 +244,23 @@ function VerifyPage() {
           setPhase("vpn");
         } else if (result.status === "clear") {
           track(token, "network_clear");
+          const challengeResponse = await fetchVerification("/api/challenge", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token }),
+            cache: "no-store",
+          });
+          if (!challengeResponse.ok) {
+            throw new Error(`Challenge request failed with status ${challengeResponse.status}`);
+          }
+          const challengeResult = (await challengeResponse.json()) as {
+            success?: boolean;
+            challenge?: Challenge;
+          };
+          if (!challengeResult.success || !challengeResult.challenge) {
+            throw new Error("The server did not issue a verification challenge");
+          }
+          setChallenge(challengeResult.challenge);
           setPhase("captcha");
         } else {
           track(token, "network_unavailable");
@@ -292,6 +280,7 @@ function VerifyPage() {
 
   const startDemo = useCallback(() => {
     console.log("[verify] Demo started; moving to Step 2");
+    setChallenge(DEMO_CHALLENGE);
     setPhase("captcha");
   }, []);
 
@@ -365,6 +354,11 @@ function VerifyPage() {
           setPhase("done");
           return;
         }
+        if (data.status === "bot_update_pending") {
+          if (data.pendingPassed) setPhase("pending");
+          else fail(data.attempts !== undefined && data.attempts >= 3 ? "lockout" : "generic");
+          return;
+        }
         if (error) return fail(error === "auth" ? "auth" : "generic");
         if (auth && data.discordUser) {
           console.log("[verify] OAuth complete: identity found; moving from Step 1 to Step 2");
@@ -390,37 +384,63 @@ function VerifyPage() {
     };
   }, [attemptKey, token, auth, error, demoMode, fail, runIpCheck]);
 
+  useEffect(() => {
+    if (phase !== "pending" || demoMode || !token) return;
+    let active = true;
+    void (async () => {
+      for (let index = 0; index < 45 && active; index += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        if (!active) return;
+        const response = await fetchVerification(
+          `/api/verify/${encodeURIComponent(token)}`,
+          { cache: "no-store" },
+          5_000,
+        ).catch(() => null);
+        if (!active || !response?.ok) continue;
+        const status = (await response.json()) as TokenInfo & { valid?: boolean };
+        if (status.status === "completed") {
+          setInfo((current) => (current ? { ...current, ...status } : current));
+          track(token, "verification_completed");
+          setPhase("done");
+          return;
+        }
+        if (["locked", "blocked", "failed"].includes(status.status ?? "")) {
+          fail(status.status === "locked" ? "lockout" : "generic");
+          return;
+        }
+      }
+      if (active) fail("bot");
+    })();
+    return () => {
+      active = false;
+    };
+  }, [demoMode, fail, phase, token]);
+
   const submitAttempt = useCallback(
     async (
-      passed: boolean,
+      answer: string,
       clickMs: number,
       timeout = false,
       failureReason?: "WRONG_ANSWER" | "TIMEOUT" | "BOT_DETECTED" | "VPN_BLOCKED",
       honeypotTriggered = false,
     ) => {
-      console.log("[verify] Submitting verification result:", {
-        passed,
-        timeout,
-        honeypotTriggered,
-      });
+      console.log("[verify] Submitting server challenge proof:", { timeout, honeypotTriggered });
       if (demoMode) {
         console.log("[verify] Demo result accepted locally");
-        return { success: true, passed };
+        return { success: true, passed: answer === DEMO_ANSWER };
       }
       const u = info?.discordUser;
+      if (!challenge?.challengeId) return null;
       const response = await fetchVerification("/api/callback", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           token,
+          challengeId: challenge.challengeId,
+          answer,
           discordId: u?.id,
           discordTag: u?.username,
           discordAvatar: u?.avatar,
-          passed,
-          vpnDetected: false,
-          accountAgeDays: u
-            ? Math.floor((Date.now() - new Date(u.createdAt).getTime()) / 86400000)
-            : 0,
           clickMs,
           timeout,
           failureReason,
@@ -446,122 +466,51 @@ function VerifyPage() {
         failureReason?: string | null;
         locked?: boolean;
         error?: string;
-        botError?: string | null;
-        code?: string;
-        detail?: string;
       } | null;
     },
-    [demoMode, info, token],
+    [challenge, demoMode, info, token],
   );
 
-  const complete = useCallback(
-    async (clickMs: number, honeypotTriggered = false) => {
-      console.log("[verify] Step 2 passed; submitting completion");
-      const result = await submitAttempt(true, clickMs, false, undefined, honeypotTriggered);
+  const submitAnswer = useCallback(
+    async (answer: string, clickMs: number, timeout = false, honeypotTriggered = false) => {
+      const result = await submitAttempt(
+        answer,
+        clickMs,
+        timeout,
+        timeout ? "TIMEOUT" : undefined,
+        honeypotTriggered,
+      );
       if (result?.success && result.passed) {
-        console.log("[verify] Completion accepted; moving to Step 3");
+        console.log("[verify] Server accepted the challenge proof");
         track(token, "captcha_passed");
         if (result.status === "completed") {
           track(token, "verification_completed");
           setPhase("done");
         } else {
           setPhase("pending");
-          let completed = false;
-          for (let i = 0; i < 20; i += 1) {
-            await new Promise((resolve) => window.setTimeout(resolve, 1000));
-            const statusResponse = await fetchVerification(
-              `/api/verify/${encodeURIComponent(token)}`,
-              { cache: "no-store" },
-              5_000,
-            ).catch((statusError: unknown) => {
-              console.error("[verify] Status poll failed:", statusError);
-              return null;
-            });
-            if (!statusResponse?.ok) continue;
-            const status = (await statusResponse.json()) as TokenInfo & { valid?: boolean };
-            if (status.botError) {
-              console.error("[verify] Bot acknowledgement error:", status.botError);
-            }
-            if (status.status === "completed") {
-              setInfo((current) => (current ? { ...current, ...status } : current));
-              track(token, "verification_completed");
-              setPhase("done");
-              completed = true;
-              break;
-            }
-          }
-          if (!completed) {
-            const finalStatus = await fetchVerification(
-              `/api/verify/${encodeURIComponent(token)}`,
-              { cache: "no-store" },
-              5_000,
-            )
-              .then(
-                (response) => (response.ok ? response.json() : null) as Promise<TokenInfo | null>,
-              )
-              .then((response) => response.json() as Promise<TokenInfo>)
-              .catch(() => null);
-            if (finalStatus)
-              setInfo((current) => (current ? { ...current, ...finalStatus } : current));
-            fail("bot");
-          }
         }
       } else {
-        console.error("[verify] Completion rejected");
+        console.log("[verify] Challenge proof was not accepted");
         track(
           token,
           result?.error === "network_check_unavailable" ? "network_unavailable" : "callback_failed",
         );
+        const serverAttempts = result?.attempts ?? attempts;
+        if (result?.success && serverAttempts > 0) {
+          setAttempts(serverAttempts);
+          writeAttemptCount(attemptKey, serverAttempts);
+        }
         if (result?.cooldownUntil && (result.attempts ?? 0) < 3) {
-          setAttempts(result.attempts ?? attempts);
           setCooldownUntil(result.cooldownUntil);
           setFailureReason(result.failureReason ?? "Verification failed");
           setPhase("cooldown");
+        } else if (result?.locked || serverAttempts >= 3) {
+          fail("lockout");
+        } else if (timeout) {
+          fail("timeout");
         } else {
-          fail(
-            result?.error === "network_check_unavailable"
-              ? "network"
-              : result?.attempts && result.attempts >= 3
-                ? "lockout"
-                : "generic",
-          );
+          fail(result?.error === "network_check_unavailable" ? "network" : "generic");
         }
-      }
-    },
-    [attempts, fail, submitAttempt, token],
-  );
-
-  const failedAttempt = useCallback(
-    async (
-      clickMs: number,
-      timeout = false,
-      failureReason: "WRONG_ANSWER" | "TIMEOUT" = timeout ? "TIMEOUT" : "WRONG_ANSWER",
-      honeypotTriggered = false,
-    ) => {
-      const nextAttempts = attempts + (timeout ? 0 : 1);
-      console.log("[verify] Step 2 failed:", { timeout, nextAttempts, honeypotTriggered });
-      if (!timeout) {
-        writeAttemptCount(attemptKey, nextAttempts);
-        setAttempts(nextAttempts);
-      }
-      const result = await submitAttempt(
-        false,
-        clickMs,
-        timeout,
-        honeypotTriggered ? "BOT_DETECTED" : failureReason,
-        honeypotTriggered,
-      );
-      track(token, timeout ? "verification_error" : "captcha_failed");
-      const serverAttempts = result?.attempts ?? nextAttempts;
-      if (result?.cooldownUntil && serverAttempts < 3) {
-        setAttempts(serverAttempts);
-        setCooldownUntil(result.cooldownUntil);
-        setFailureReason(result.failureReason ?? failureReason);
-        setPhase("cooldown");
-      } else if (serverAttempts >= 3 || result?.locked) {
-        fail("lockout");
-      } else if (timeout) {
-        fail("timeout");
       }
     },
     [attemptKey, attempts, fail, submitAttempt, token],
@@ -728,16 +677,14 @@ function VerifyPage() {
             </motion.div>
           )}
 
-          {phase === "captcha" && info && user && (
+          {phase === "captcha" && info && user && challenge && (
             <motion.div key="captcha" {...fade}>
               <Captcha
                 info={info}
                 user={user}
                 ageDays={ageDays ?? 0}
-                question={question}
-                onPass={complete}
-                onFail={(clickMs, reason) => failedAttempt(clickMs, false, reason)}
-                onTimeout={(clickMs) => failedAttempt(clickMs, true, "TIMEOUT")}
+                challenge={challenge}
+                onSubmit={submitAnswer}
               />
             </motion.div>
           )}
@@ -1068,27 +1015,23 @@ function Captcha({
   info,
   user,
   ageDays,
-  question,
-  onPass,
-  onFail,
-  onTimeout,
+  challenge,
+  onSubmit,
 }: {
   info: TokenInfo;
   user: NonNullable<TokenInfo["discordUser"]>;
   ageDays: number;
-  question: (typeof QUESTIONS)[number];
-  onPass: (clickMs: number, honeypotTriggered?: boolean) => void;
-  onFail: (
+  challenge: Challenge;
+  onSubmit: (
+    answer: string,
     clickMs: number,
-    reason?: "WRONG_ANSWER" | "TIMEOUT",
+    timeout?: boolean,
     honeypotTriggered?: boolean,
   ) => Promise<void>;
-  onTimeout: (clickMs: number, honeypotTriggered?: boolean) => void;
 }) {
   const [left, setLeft] = useState(60);
-  const [flash, setFlash] = useState<{ opt: string; ok: boolean } | null>(null);
+  const [selected, setSelected] = useState<string | null>(null);
   const [honeypotTriggered, setHoneypotTriggered] = useState(false);
-  const shake = useAnimationControls();
   const done = useRef(false);
   const startedAt = useRef(Date.now());
 
@@ -1099,22 +1042,15 @@ function Captcha({
   useEffect(() => {
     if (left === 0 && !done.current) {
       done.current = true;
-      onTimeout(Date.now() - startedAt.current, honeypotTriggered);
+      void onSubmit("", Date.now() - startedAt.current, true, honeypotTriggered);
     }
-  }, [honeypotTriggered, left, onTimeout]);
+  }, [honeypotTriggered, left, onSubmit]);
 
   const pick = (opt: string) => {
     if (done.current) return;
-    if (opt === question.answer) {
-      done.current = true;
-      setFlash({ opt, ok: true });
-      setTimeout(() => onPass(Date.now() - startedAt.current, honeypotTriggered), 650);
-    } else {
-      setFlash({ opt, ok: false });
-      void shake.start({ x: [-8, 8, -8, 8, 0], transition: { duration: 0.4 } });
-      void onFail(Date.now() - startedAt.current, "WRONG_ANSWER", honeypotTriggered);
-      setTimeout(() => setFlash(null), 500);
-    }
+    done.current = true;
+    setSelected(opt);
+    void onSubmit(opt, Date.now() - startedAt.current, false, honeypotTriggered);
   };
 
   const avatar = user.avatar
@@ -1122,7 +1058,7 @@ function Captcha({
     : `https://cdn.discordapp.com/embed/avatars/${Number(BigInt(user.id) >> 22n) % 6}.png`;
 
   return (
-    <motion.div animate={shake} className="space-y-4">
+    <motion.div className="space-y-4">
       <div
         aria-hidden="true"
         className="pointer-events-none absolute -left-[10000px] top-auto h-px w-px overflow-hidden"
@@ -1196,23 +1132,22 @@ function Captcha({
         <p className="text-[10px] uppercase tracking-[0.8px] text-[var(--faint-2)]">
           Human Verification
         </p>
-        <p className="mt-1.5 text-sm text-foreground">{question.q}</p>
+        <p className="mt-1.5 text-sm text-foreground">{challenge.prompt}</p>
         <div className="mt-3 grid grid-cols-2 gap-2">
-          {question.options.map((o) => {
-            const f = flash?.opt === o ? flash : null;
+          {challenge.options.map((o) => {
+            const isSelected = selected === o;
             return (
               <motion.button
                 key={o}
                 type="button"
                 onClick={() => pick(o)}
-                animate={f?.ok ? { scale: [1, 1.05, 1], opacity: [1, 1, 0.4] } : {}}
+                disabled={selected !== null}
+                animate={isSelected ? { scale: [1, 1.03, 1] } : {}}
                 transition={{ duration: 0.6 }}
                 aria-label={`Answer: ${o}`}
                 className={`min-h-11 rounded-lg border px-3 py-2.5 text-sm text-foreground transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green)] ${
-                  f
-                    ? f.ok
-                      ? "border-[var(--green)] bg-[var(--green)]/20"
-                      : "border-[var(--red)] bg-[var(--red)]/20"
+                  isSelected
+                    ? "border-[var(--amber)] bg-[var(--amber)]/10"
                     : "border-[var(--surface-border-2)] bg-[var(--surface-2)] hover:border-[var(--green)]/30 hover:bg-[var(--green-soft)]"
                 }`}
               >

@@ -5,7 +5,7 @@ export const Route = createFileRoute("/api/suspicious/$guildId")({
   server: {
     handlers: {
       GET: async ({ params, request }) => {
-        console.log("[suspicious] Request received for guild:", params.guildId);
+        console.log("[suspicious] Request received");
         const { validateApiKey } = await import("@/lib/api-auth.server");
         const authError = validateApiKey(request);
         if (authError) return authError;
@@ -22,7 +22,10 @@ export const Route = createFileRoute("/api/suspicious/$guildId")({
           console.log("[suspicious] Returned entries:", attempts.length);
           return Response.json({ success: true, attempts });
         } catch (error) {
-          console.error("[suspicious] Query failed:", error);
+          console.error(
+            "[suspicious] Query failed:",
+            error instanceof Error ? error.name : "unknown",
+          );
           return Response.json({ success: false }, { status: 500 });
         }
       },

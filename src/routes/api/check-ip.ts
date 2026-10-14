@@ -19,7 +19,7 @@ export const Route = createFileRoute("/api/check-ip")({
             headers: { "cache-control": "no-store" },
           });
         } catch (error) {
-          console.error("[check-ip] Failed:", error);
+          console.error("[check-ip] Failed:", error instanceof Error ? error.name : "unknown");
           return Response.json(
             { status: "unavailable", isVPN: false, type: null, ip },
             { status: 503, headers: { "cache-control": "no-store" } },

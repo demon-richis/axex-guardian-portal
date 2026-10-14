@@ -111,7 +111,7 @@ export const Route = createFileRoute("/api/telemetry")({
           }
           return Response.json({ success: true });
         } catch (error) {
-          console.error("[telemetry] Failed:", error);
+          console.error("[telemetry] Failed:", error instanceof Error ? error.name : "unknown");
           return Response.json({ success: false }, { status: 500 });
         }
       },

@@ -25,7 +25,7 @@ export const Route = createFileRoute("/api/guild/register")({
           console.error("[guild/register] Invalid request body");
           return Response.json({ success: false }, { status: 400 });
         }
-        console.log("[guild/register] Upserting guild:", parsed.data.guildId);
+        console.log("[guild/register] Upserting guild configuration");
         try {
           const { guildConfigs } = await import("@/lib/db/schema");
           const config = await (
@@ -57,10 +57,13 @@ export const Route = createFileRoute("/api/guild/register")({
               },
             })
             .returning();
-          console.log("[guild/register] Saved successfully:", parsed.data.guildId);
+          console.log("[guild/register] Saved successfully");
           return Response.json({ success: true, guild: config[0] });
         } catch (error) {
-          console.error("[guild/register] Failed:", error);
+          console.error(
+            "[guild/register] Failed:",
+            error instanceof Error ? error.name : "unknown",
+          );
           return Response.json({ success: false }, { status: 500 });
         }
       },

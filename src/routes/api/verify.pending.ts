@@ -20,7 +20,7 @@ export const Route = createFileRoute("/api/verify/pending")({
           console.error("[verify/pending] Missing or invalid userId/guildId");
           return Response.json({ error: "Missing or invalid userId or guildId" }, { status: 400 });
         }
-        console.log("[verify/pending] Checking for userId:", userId.data);
+        console.log("[verify/pending] Checking pending token");
 
         try {
           const { verifyTokens } = await import("@/lib/db/schema");
@@ -65,7 +65,7 @@ export const Route = createFileRoute("/api/verify/pending")({
             failureReason: row?.failureReason ?? null,
           });
         } catch (error) {
-          console.error("[verify/pending] Error:", error);
+          console.error("[verify/pending] Error:", error instanceof Error ? error.name : "unknown");
           return Response.json({ token: null }, { status: 500 });
         }
       },

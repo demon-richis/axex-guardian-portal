@@ -2,7 +2,7 @@ import "dotenv/config";
 
 import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
-import * as schema from "./schema";
+import * as schema from "./schema.ts";
 
 export function getDb() {
   const url = process.env["DATABASE_URL"];
@@ -56,7 +56,10 @@ export async function checkIp(ip: string): Promise<{
     const isVPN = proxy === "yes" || normalizedType === "vpn" || normalizedType.includes("proxy");
     return { status: isVPN ? "blocked" : "clear", isVPN, type, ip };
   } catch (error) {
-    console.error("[check-ip] Proxy lookup failed:", error);
+    console.error(
+      "[check-ip] Proxy lookup failed:",
+      error instanceof Error ? error.name : "unknown",
+    );
     return { status: "unavailable", isVPN: false, type: null, ip };
   }
 }

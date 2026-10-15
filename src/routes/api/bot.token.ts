@@ -2,6 +2,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { and, eq, gt, inArray, lt } from "drizzle-orm";
 import { z } from "zod";
 import { isReferenceIdCollision } from "../../lib/reference-id.server.ts";
+import type { auditLogs, verifyTokens } from "../../lib/db/schema.ts";
+import type { getDb } from "../../lib/db/client.server.ts";
+
+type BotTokenDependencies = {
+  validateApiKey: (request: Request) => Response | null;
+  getDb: typeof getDb;
+  auditLogs: typeof auditLogs;
+  verifyTokens: typeof verifyTokens;
+};
 
 const Body = z.object({
   token: z.string().min(1).max(200),
@@ -12,127 +21,182 @@ const Body = z.object({
   expiresAt: z.string().datetime({ offset: true }),
 });
 
+function safeFailureDetails(stage: string, error: unknown) {
+  let current: unknown = error;
+  let sqlState: string | undefined;
+  for (let depth = 0; depth < 3 && current && typeof current === "object"; depth += 1) {
+    const candidate = current as { code?: unknown; cause?: unknown };
+    if (typeof candidate.code === "string" && /^[0-9A-Z]{5}$/.test(candidate.code)) {
+      sqlState = candidate.code;
+      break;
+    }
+    current = candidate.cause;
+  }
+  return {
+    stage,
+    errorName: error instanceof Error ? error.name : "unknown",
+    ...(sqlState ? { sqlState } : {}),
+  };
+}
+
+function failedResponse(stage: string, error: unknown) {
+  console.error("[bot/token] Request failed:", safeFailureDetails(stage, error));
+  return Response.json({ error: "Internal server error" }, { status: 500 });
+}
+
+function retentionDaysFromEnvironment(value: string | undefined) {
+  const parsed = Number(value || 90);
+  if (!Number.isFinite(parsed)) return 90;
+  return Math.min(365, Math.max(7, parsed));
+}
+
+export async function handleBotTokenRequest(request: Request, dependencies: BotTokenDependencies) {
+  console.log("[bot/token] Request received");
+  let stage = "authentication";
+  try {
+    const authError = dependencies.validateApiKey(request);
+    if (authError) return authError;
+
+    stage = "body_validation";
+    const parsed = Body.safeParse(await request.json().catch(() => null));
+    if (!parsed.success) {
+      console.error("[bot/token] Invalid request body");
+      return Response.json({ error: "Missing or invalid required fields" }, { status: 400 });
+    }
+
+    stage = "database_initialization";
+    const db = dependencies.getDb();
+    const now = new Date();
+    const retentionDays = retentionDaysFromEnvironment(process.env["AXEX_RETENTION_DAYS"]);
+    const retentionCutoff = new Date(now.getTime() - retentionDays * 86_400_000);
+
+    stage = "retention_cleanup";
+    await db
+      .delete(dependencies.verifyTokens)
+      .where(lt(dependencies.verifyTokens.createdAt, retentionCutoff));
+    await db
+      .delete(dependencies.auditLogs)
+      .where(lt(dependencies.auditLogs.createdAt, retentionCutoff));
+
+    const { token, userId, guildId, guildName, guildMemberCount, expiresAt } = parsed.data;
+    stage = "active_token_lookup";
+    const active = await db
+      .select({
+        token: dependencies.verifyTokens.token,
+        referenceId: dependencies.verifyTokens.referenceId,
+      })
+      .from(dependencies.verifyTokens)
+      .where(
+        and(
+          eq(dependencies.verifyTokens.userId, userId),
+          eq(dependencies.verifyTokens.guildId, guildId),
+          gt(dependencies.verifyTokens.expiresAt, now),
+          inArray(dependencies.verifyTokens.status, ["pending", "bot_update_pending"]),
+        ),
+      )
+      .limit(1);
+    if (active[0]) {
+      return Response.json({
+        success: true,
+        reused: true,
+        token: active[0].token,
+        referenceId: active[0].referenceId,
+      });
+    }
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const crypto = await import("node:crypto");
+      const referenceId = `AX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+      try {
+        stage = "token_insert";
+        const inserted = await db
+          .insert(dependencies.verifyTokens)
+          .values({
+            token,
+            userId,
+            guildId,
+            guildName: guildName || "Unknown",
+            guildMemberCount: guildMemberCount || 0,
+            expiresAt: new Date(expiresAt),
+            used: false,
+            status: "pending",
+            referenceId,
+          })
+          .onConflictDoNothing({ target: dependencies.verifyTokens.token })
+          .returning({
+            token: dependencies.verifyTokens.token,
+            referenceId: dependencies.verifyTokens.referenceId,
+          });
+        if (inserted[0]) {
+          console.log("[bot/token] Saved successfully");
+          return Response.json({
+            success: true,
+            token,
+            referenceId: inserted[0].referenceId,
+          });
+        }
+
+        stage = "token_conflict_lookup";
+        const existingToken = (
+          await db
+            .select({
+              referenceId: dependencies.verifyTokens.referenceId,
+              userId: dependencies.verifyTokens.userId,
+              guildId: dependencies.verifyTokens.guildId,
+              expiresAt: dependencies.verifyTokens.expiresAt,
+              status: dependencies.verifyTokens.status,
+            })
+            .from(dependencies.verifyTokens)
+            .where(eq(dependencies.verifyTokens.token, token))
+            .limit(1)
+        )[0];
+        if (
+          existingToken?.userId === userId &&
+          existingToken.guildId === guildId &&
+          existingToken.expiresAt.getTime() > now.getTime() &&
+          ["pending", "bot_update_pending"].includes(existingToken.status)
+        ) {
+          return Response.json({
+            success: true,
+            reused: true,
+            token,
+            referenceId: existingToken.referenceId,
+          });
+        }
+        return Response.json(
+          { error: "Token conflicts with an existing verification" },
+          { status: 409 },
+        );
+      } catch (error) {
+        if (isReferenceIdCollision(error)) continue;
+        return failedResponse(stage, error);
+      }
+    }
+    console.error("[bot/token] Could not allocate a unique verification reference");
+    return Response.json({ error: "Could not allocate verification reference" }, { status: 503 });
+  } catch (error) {
+    return failedResponse(stage, error);
+  }
+}
+
 export const Route = createFileRoute("/api/bot/token")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        console.log("[bot/token] Request received");
-        const { validateApiKey } = await import("@/lib/api-auth.server");
-        const authError = validateApiKey(request);
-        if (authError) return authError;
-
-        const parsed = Body.safeParse(await request.json().catch(() => null));
-        if (!parsed.success) {
-          console.error("[bot/token] Invalid request body");
-          return Response.json({ error: "Missing or invalid required fields" }, { status: 400 });
-        }
-
         try {
-          const crypto = await import("node:crypto");
-          const { verifyTokens } = await import("@/lib/db/schema");
-          const { auditLogs } = await import("@/lib/db/schema");
-          const { getDb } = await import("@/lib/db/client.server");
-          const { token, userId, guildId, guildName, guildMemberCount, expiresAt } = parsed.data;
-          const db = getDb();
-          const now = new Date();
-          const retentionDays = Math.min(
-            365,
-            Math.max(7, Number(process.env["AXEX_RETENTION_DAYS"] || 90)),
-          );
-          const retentionCutoff = new Date(now.getTime() - retentionDays * 86_400_000);
-
-          await db.delete(verifyTokens).where(lt(verifyTokens.createdAt, retentionCutoff));
-          await db.delete(auditLogs).where(lt(auditLogs.createdAt, retentionCutoff));
-
-          const active = await db
-            .select({ token: verifyTokens.token, referenceId: verifyTokens.referenceId })
-            .from(verifyTokens)
-            .where(
-              and(
-                eq(verifyTokens.userId, userId),
-                eq(verifyTokens.guildId, guildId),
-                gt(verifyTokens.expiresAt, now),
-                inArray(verifyTokens.status, ["pending", "bot_update_pending"]),
-              ),
-            )
-            .limit(1);
-          if (active[0]) {
-            return Response.json({
-              success: true,
-              reused: true,
-              token: active[0].token,
-              referenceId: active[0].referenceId,
-            });
-          }
-          for (let attempt = 0; attempt < 10; attempt += 1) {
-            const referenceId = `AX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
-            try {
-              const inserted = await db
-                .insert(verifyTokens)
-                .values({
-                  token,
-                  userId,
-                  guildId,
-                  guildName: guildName || "Unknown",
-                  guildMemberCount: guildMemberCount || 0,
-                  expiresAt: new Date(expiresAt),
-                  used: false,
-                  status: "pending",
-                  referenceId,
-                })
-                .onConflictDoNothing({ target: verifyTokens.token })
-                .returning({ token: verifyTokens.token, referenceId: verifyTokens.referenceId });
-              if (inserted[0]) {
-                console.log("[bot/token] Saved successfully");
-                return Response.json({
-                  success: true,
-                  token,
-                  referenceId: inserted[0].referenceId,
-                });
-              }
-
-              const existingToken = (
-                await db
-                  .select({
-                    referenceId: verifyTokens.referenceId,
-                    userId: verifyTokens.userId,
-                    guildId: verifyTokens.guildId,
-                    expiresAt: verifyTokens.expiresAt,
-                    status: verifyTokens.status,
-                  })
-                  .from(verifyTokens)
-                  .where(eq(verifyTokens.token, token))
-                  .limit(1)
-              )[0];
-              if (
-                existingToken?.userId === userId &&
-                existingToken.guildId === guildId &&
-                existingToken.expiresAt.getTime() > now.getTime() &&
-                ["pending", "bot_update_pending"].includes(existingToken.status)
-              ) {
-                return Response.json({
-                  success: true,
-                  reused: true,
-                  token,
-                  referenceId: existingToken.referenceId,
-                });
-              }
-              return Response.json(
-                { error: "Token conflicts with an existing verification" },
-                { status: 409 },
-              );
-            } catch (error) {
-              if (!isReferenceIdCollision(error)) throw error;
-            }
-          }
-          console.error("[bot/token] Could not allocate a unique verification reference");
-          return Response.json(
-            { error: "Could not allocate verification reference" },
-            { status: 503 },
-          );
+          const [{ validateApiKey }, { verifyTokens, auditLogs }, { getDb }] = await Promise.all([
+            import("@/lib/api-auth.server"),
+            import("@/lib/db/schema"),
+            import("@/lib/db/client.server"),
+          ]);
+          return handleBotTokenRequest(request, {
+            validateApiKey,
+            getDb,
+            verifyTokens,
+            auditLogs,
+          });
         } catch (error) {
-          console.error("[bot/token] Error:", error instanceof Error ? error.name : "unknown");
-          return Response.json({ error: "Internal server error" }, { status: 500 });
+          return failedResponse("dependency_loading", error);
         }
       },
     },

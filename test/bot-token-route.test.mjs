@@ -87,7 +87,7 @@ test("token creation succeeds against the current isolated schema", async () => 
     assert.equal(response.status, 200);
     assert.equal(data.success, true);
     assert.equal(data.token, "mock-token-123");
-    assert.match(data.referenceId, /^AX-[0-9A-F]{8}$/);
+    assert.match(data.referenceId, /^AX-[0-9A-F]{32}$/);
     const rows = await db.select().from(schema.verifyTokens);
     assert.equal(rows.length, 1);
     assert.equal(rows[0].userId, "123456789012345678");

@@ -106,7 +106,7 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
 
     for (let attempt = 0; attempt < 10; attempt += 1) {
       const crypto = await import("node:crypto");
-      const referenceId = `AX-${crypto.randomBytes(4).toString("hex").toUpperCase()}`;
+      const referenceId = `AX-${crypto.randomBytes(16).toString("hex").toUpperCase()}`;
       try {
         stage = "token_insert";
         const inserted = await db

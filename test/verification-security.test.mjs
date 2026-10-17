@@ -17,6 +17,7 @@ import { verificationCallbackBody } from "../src/lib/verification-callback-body.
 import { bindOAuthIdentity } from "../src/lib/discord-identity.server.ts";
 import { isSameOrigin } from "../src/lib/rate-limit.server.ts";
 import { isReferenceIdCollision } from "../src/lib/reference-id.server.ts";
+import { releaseVerificationState } from "../src/lib/verification-state.server.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const migrationDir = join(root, "drizzle");
@@ -25,6 +26,7 @@ const migrationFiles = [
   "0001_lowly_silver_samurai.sql",
   "0002_absent_goblin_queen.sql",
   "0003_server_verified_challenge_outbox.sql",
+  "0004_durable_verification_state.sql",
 ];
 
 async function applyMigration(client, name) {
@@ -523,6 +525,122 @@ test("new reference IDs remain bot-compatible and the database rejects duplicate
     await assert.rejects(() =>
       seedToken(db, { token: "other-token", referenceId: seed.referenceId }),
     );
+  } finally {
+    await client.close();
+  }
+});
+
+test("durable verification state survives token expiry, locks across new tokens, and resets on release", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const start = new Date("2026-01-01T00:00:00.000Z");
+    const first = await seedToken(db, {
+      token: "durable-state-1",
+      now: start,
+      expiresInMs: 8 * 60 * 60 * 1000,
+    });
+    const firstChallenge = await challengeFor(db, first.token, start);
+    const firstWrong = firstChallenge.challenge.options.find(
+      (option) => option !== firstChallenge.correctAnswer,
+    );
+    const failedOnce = await submitVerificationChallenge(
+      db,
+      submitInput(first, firstChallenge.challenge, firstWrong, { now: start }),
+    );
+    assert.equal(failedOnce.attempts, 1);
+
+    const second = await seedToken(db, {
+      token: "durable-state-2",
+      referenceId: "AX-DURABLE02",
+      userId: first.userId,
+      discordId: first.discordId,
+      now: start,
+      expiresInMs: 8 * 60 * 60 * 1000,
+    });
+    const duringCooldown = await issueVerificationChallenge(
+      db,
+      second.token,
+      new Date(start.getTime() + 1_000),
+    );
+    assert.equal(duringCooldown.success, false);
+    assert.equal(duringCooldown.error, "cooldown");
+    assert.equal(duringCooldown.attempts, 1);
+
+    const afterFirstCooldown = new Date(start.getTime() + 3 * 60 * 1000 + 1);
+    const secondChallenge = await challengeFor(db, second.token, afterFirstCooldown);
+    const secondWrong = secondChallenge.challenge.options.find(
+      (option) => option !== secondChallenge.correctAnswer,
+    );
+    const failedTwice = await submitVerificationChallenge(
+      db,
+      submitInput(second, secondChallenge.challenge, secondWrong, { now: afterFirstCooldown }),
+    );
+    assert.equal(failedTwice.attempts, 2);
+
+    const third = await seedToken(db, {
+      token: "durable-state-3",
+      referenceId: "AX-DURABLE03",
+      userId: first.userId,
+      discordId: first.discordId,
+      now: start,
+      expiresInMs: 8 * 60 * 60 * 1000,
+    });
+    const stillCooling = await issueVerificationChallenge(
+      db,
+      third.token,
+      new Date(start.getTime() + 10 * 60 * 1000 + 1),
+    );
+    assert.equal(stillCooling.success, false);
+    assert.equal(stillCooling.error, "cooldown");
+    assert.equal(stillCooling.attempts, 2);
+
+    const afterSecondCooldown = new Date(afterFirstCooldown.getTime() + 3 * 60 * 60 * 1000 + 1);
+    const thirdChallenge = await challengeFor(db, third.token, afterSecondCooldown);
+    const thirdWrong = thirdChallenge.challenge.options.find(
+      (option) => option !== thirdChallenge.correctAnswer,
+    );
+    const locked = await submitVerificationChallenge(
+      db,
+      submitInput(third, thirdChallenge.challenge, thirdWrong, { now: afterSecondCooldown }),
+    );
+    assert.equal(locked.attempts, 3);
+    assert.equal(locked.locked, true);
+
+    const fourth = await seedToken(db, {
+      token: "durable-state-4",
+      referenceId: "AX-DURABLE04",
+      userId: first.userId,
+      discordId: first.discordId,
+      now: start,
+      expiresInMs: 8 * 60 * 60 * 1000,
+    });
+    const blocked = await issueVerificationChallenge(
+      db,
+      fourth.token,
+      new Date(afterSecondCooldown.getTime() + 1_000),
+    );
+    assert.equal(blocked.success, false);
+    assert.equal(blocked.error, "locked");
+
+    assert.equal(
+      await releaseVerificationState(
+        db,
+        "test-guild",
+        first.userId,
+        new Date(afterSecondCooldown.getTime() + 2_000),
+      ),
+      true,
+    );
+    const released = await issueVerificationChallenge(
+      db,
+      fourth.token,
+      new Date(afterSecondCooldown.getTime() + 2_000),
+    );
+    assert.equal(released.success, true);
+    const state = (await db.select().from(schema.verificationState))[0];
+    assert.equal(state.attempts, 0);
+    assert.equal(state.lockedAt, null);
+    assert.equal(state.cooldownUntil, null);
   } finally {
     await client.close();
   }

@@ -2,6 +2,7 @@ import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto
 import { and, eq, gt, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
 import type { getDb } from "./db/client.server";
 import { verifyTokens } from "./db/schema.ts";
+import { ensureVerificationState } from "./verification-state.server.ts";
 
 type PortalDb = ReturnType<typeof getDb>;
 
@@ -118,17 +119,19 @@ export async function issueVerificationChallenge(
     await db.select().from(verifyTokens).where(eq(verifyTokens.token, token)).limit(1)
   )[0];
   if (!row) return { success: false, error: "invalid_token" };
+  const state = await ensureVerificationState(db, row.guildId, row.userId, now);
+  if (!state) return { success: false, error: "invalid_token" };
   if (row.used) return { success: false, error: "used" };
   if (row.expiresAt.getTime() <= now.getTime()) return { success: false, error: "expired" };
-  if (row.status === "locked" || (row.attempts ?? 0) >= 3) {
-    return { success: false, error: "locked", attempts: row.attempts };
+  if (row.status === "locked" || state.lockedAt || state.attempts >= 3) {
+    return { success: false, error: "locked", attempts: state.attempts };
   }
-  if (row.cooldownUntil && row.cooldownUntil.getTime() > now.getTime()) {
+  if (state.cooldownUntil && state.cooldownUntil.getTime() > now.getTime()) {
     return {
       success: false,
       error: "cooldown",
-      attempts: row.attempts,
-      cooldownUntil: row.cooldownUntil.toISOString(),
+      attempts: state.attempts,
+      cooldownUntil: state.cooldownUntil.toISOString(),
     };
   }
   if (!row.discordId || row.discordId !== row.userId) {

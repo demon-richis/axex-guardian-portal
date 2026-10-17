@@ -2,7 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { and, eq, gt, inArray, lt } from "drizzle-orm";
 import { z } from "zod";
 import { isReferenceIdCollision } from "../../lib/reference-id.server.ts";
-import type { auditLogs, verifyTokens } from "../../lib/db/schema.ts";
+import type { auditLogs, verificationState, verifyTokens } from "../../lib/db/schema.ts";
 import type { getDb } from "../../lib/db/client.server.ts";
 
 type BotTokenDependencies = {
@@ -10,6 +10,7 @@ type BotTokenDependencies = {
   getDb: typeof getDb;
   auditLogs: typeof auditLogs;
   verifyTokens: typeof verifyTokens;
+  verificationState: typeof verificationState;
 };
 
 const Body = z.object({
@@ -79,6 +80,35 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
       .where(lt(dependencies.auditLogs.createdAt, retentionCutoff));
 
     const { token, userId, guildId, guildName, guildMemberCount, expiresAt } = parsed.data;
+    stage = "verification_state_lookup";
+    const state = (
+      await db
+        .select()
+        .from(dependencies.verificationState)
+        .where(
+          and(
+            eq(dependencies.verificationState.userId, userId),
+            eq(dependencies.verificationState.guildId, guildId),
+          ),
+        )
+        .limit(1)
+    )[0];
+    if (state?.lockedAt || (state?.attempts ?? 0) >= 3) {
+      return Response.json(
+        { error: "Verification is locked", locked: true, attempts: state?.attempts ?? 0 },
+        { status: 423 },
+      );
+    }
+    if (state?.cooldownUntil && state.cooldownUntil.getTime() > now.getTime()) {
+      return Response.json(
+        {
+          error: "Verification is on cooldown",
+          cooldownUntil: state.cooldownUntil.toISOString(),
+          attempts: state.attempts,
+        },
+        { status: 429 },
+      );
+    }
     stage = "active_token_lookup";
     const active = await db
       .select({
@@ -128,6 +158,16 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
             referenceId: dependencies.verifyTokens.referenceId,
           });
         if (inserted[0]) {
+          await db
+            .insert(dependencies.verificationState)
+            .values({ guildId, userId, lastReferenceId: inserted[0].referenceId, updatedAt: now })
+            .onConflictDoUpdate({
+              target: [
+                dependencies.verificationState.guildId,
+                dependencies.verificationState.userId,
+              ],
+              set: { lastReferenceId: inserted[0].referenceId, updatedAt: now },
+            });
           console.log("[bot/token] Saved successfully");
           return Response.json({
             success: true,
@@ -184,16 +224,18 @@ export const Route = createFileRoute("/api/bot/token")({
     handlers: {
       POST: async ({ request }) => {
         try {
-          const [{ validateApiKey }, { verifyTokens, auditLogs }, { getDb }] = await Promise.all([
-            import("@/lib/api-auth.server"),
-            import("@/lib/db/schema"),
-            import("@/lib/db/client.server"),
-          ]);
+          const [{ validateApiKey }, { verifyTokens, verificationState, auditLogs }, { getDb }] =
+            await Promise.all([
+              import("@/lib/api-auth.server"),
+              import("@/lib/db/schema"),
+              import("@/lib/db/client.server"),
+            ]);
           return handleBotTokenRequest(request, {
             validateApiKey,
-            getDb,
-            verifyTokens,
             auditLogs,
+            verifyTokens,
+            verificationState,
+            getDb,
           });
         } catch (error) {
           return failedResponse("dependency_loading", error);

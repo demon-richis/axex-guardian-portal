@@ -69,6 +69,23 @@ export const verifyTokens = pgTable(
   ],
 );
 
+export const verificationState = pgTable(
+  "verification_state",
+  {
+    guildId: text("guild_id").notNull(),
+    userId: text("user_id").notNull(),
+    attempts: integer("attempts").default(0).notNull(),
+    cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
+    lockedAt: timestamp("locked_at", { withTimezone: true }),
+    lastReferenceId: text("last_reference_id"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("verification_state_guild_user_unique_idx").on(table.guildId, table.userId),
+    index("verification_state_cooldown_idx").on(table.cooldownUntil),
+  ],
+);
+
 export const botCallbackOutbox = pgTable(
   "bot_callback_outbox",
   {

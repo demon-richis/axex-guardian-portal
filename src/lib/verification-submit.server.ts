@@ -3,6 +3,7 @@ import { eq, sql } from "drizzle-orm";
 import type { getDb } from "./db/client.server";
 import { auditLogs, suspiciousAttempts, verifyTokens } from "./db/schema.ts";
 import { answerMatches, hashChallengeAnswer } from "./verification-challenge.server.ts";
+import { ensureVerificationState } from "./verification-state.server.ts";
 
 type PortalDb = ReturnType<typeof getDb>;
 
@@ -54,6 +55,8 @@ export async function submitVerificationChallenge(
     await db.select().from(verifyTokens).where(eq(verifyTokens.token, input.token)).limit(1)
   )[0];
   if (!row) return { success: false, error: "invalid_token", httpStatus: 400 };
+  const state = await ensureVerificationState(db, row.guildId, row.userId, now);
+  if (!state) return { success: false, error: "invalid_token", httpStatus: 400 };
 
   const submittedDigest = hashChallengeAnswer(
     input.challengeId,
@@ -73,8 +76,8 @@ export async function submitVerificationChallenge(
       passed: Boolean(row.completedAt),
       status: row.status,
       referenceId: row.referenceId,
-      attempts: row.attempts,
-      cooldownUntil: row.cooldownUntil?.toISOString() ?? null,
+      attempts: state.attempts,
+      cooldownUntil: state.cooldownUntil?.toISOString() ?? null,
       failureReason: row.failureReason,
       locked: row.status === "locked",
       idempotent: true,
@@ -98,15 +101,20 @@ export async function submitVerificationChallenge(
   if (row.challengeId === input.challengeId && row.challengeConsumedAt) {
     return { success: false, error: "challenge_already_consumed", httpStatus: 409 };
   }
-  if (row.status === "locked" || (row.attempts ?? 0) >= 3) {
-    return { success: false, error: "attempts_exhausted", attempts: row.attempts, httpStatus: 429 };
+  if (row.status === "locked" || state.lockedAt || state.attempts >= 3) {
+    return {
+      success: false,
+      error: "attempts_exhausted",
+      attempts: state.attempts,
+      httpStatus: 429,
+    };
   }
-  if (row.cooldownUntil && row.cooldownUntil.getTime() > now.getTime()) {
+  if (state.cooldownUntil && state.cooldownUntil.getTime() > now.getTime()) {
     return {
       success: false,
       error: "cooldown",
-      attempts: row.attempts,
-      cooldownUntil: row.cooldownUntil.toISOString(),
+      attempts: state.attempts,
+      cooldownUntil: state.cooldownUntil.toISOString(),
       httpStatus: 429,
     };
   }
@@ -129,7 +137,7 @@ export async function submitVerificationChallenge(
     discordId: row.discordId,
     guildId: row.guildId,
   });
-  const attempts = (row.attempts ?? 0) + 1;
+  const attempts = state.attempts + 1;
   const accountAgeDays = ageInDays(row.discordId, now);
   const clickMs = input.clickMs ?? null;
   const honeypotTriggered = Boolean(input.honeypotTriggered || input.honeypot?.trim());
@@ -164,7 +172,7 @@ export async function submitVerificationChallenge(
                   : null;
   const flagged = Boolean(automaticReason);
   const finalPassed = proofCorrect && !vpnDetected && !botDetected && accountAgeDays >= 3;
-  const locked = !finalPassed && attempts >= 3;
+  const locked = !finalPassed && (attempts >= 3 || vpnDetected);
   const terminal = finalPassed || locked || vpnDetected || botDetected;
   const cooldownUntil = terminal
     ? null
@@ -219,7 +227,21 @@ export async function submitVerificationChallenge(
       )`
     : sql`queued AS (SELECT NULL::integer AS id WHERE FALSE)`;
   const claimResult = await db.execute(sql`
-    WITH claimed AS (
+    WITH state_claim AS (
+      UPDATE verification_state
+      SET attempts = ${attempts},
+          cooldown_until = ${cooldownUntil},
+          locked_at = ${locked ? now : null},
+          last_reference_id = ${row.referenceId},
+          updated_at = ${now}
+      WHERE guild_id = ${row.guildId}
+        AND user_id = ${row.userId}
+        AND attempts = ${state.attempts}
+        AND locked_at IS NULL
+        AND (cooldown_until IS NULL OR cooldown_until <= ${now})
+      RETURNING attempts
+    ),
+    claimed AS (
       UPDATE verify_tokens
       SET challenge_consumed_at = ${now},
           challenge_claim_id = ${claimId},
@@ -246,7 +268,7 @@ export async function submitVerificationChallenge(
         AND challenge_consumed_at IS NULL
         AND challenge_expires_at > ${now}
         AND expires_at > ${now}
-        AND attempts < 3
+        AND EXISTS (SELECT 1 FROM state_claim)
       RETURNING token
     ),
     ${outboxCte}

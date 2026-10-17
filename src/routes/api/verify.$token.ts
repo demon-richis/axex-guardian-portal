@@ -1,111 +1,41 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 
 export const Route = createFileRoute("/api/verify/$token")({
   server: {
     handlers: {
       GET: async ({ params }) => {
         const { getDb, snowflakeToDate } = await import("@/lib/db/client.server");
-        const { verifyTokens } = await import("@/lib/db/schema");
+        const { verificationState, verifyTokens } = await import("@/lib/db/schema");
         try {
           const token = params.token.slice(0, 200);
-          const rows = await getDb()
-            .select()
-            .from(verifyTokens)
-            .where(eq(verifyTokens.token, token))
-            .limit(1);
-          const row = rows[0];
-          if (!row) {
-            const result = { valid: false, reason: "invalid" } as const;
-            return Response.json(result);
-          }
-          // A completed token is permanently finished. It must remain readable
-          // so reopening the link shows the completed state instead of starting
-          // OAuth and verification again, even after the original expiry time.
-          if (row.status === "completed") {
-            const result = {
-              valid: true,
-              completed: true,
-              userId: row.userId,
-              guildId: row.guildId,
-              guildName: row.guildName,
-              guildMemberCount: row.guildMemberCount ?? 0,
-              expiresAt: row.expiresAt.toISOString(),
-              status: row.status,
-              referenceId: row.referenceId,
-              attempts: row.attempts,
-              failureReason: row.failureReason,
-              botAcknowledged: Boolean(row.botAcknowledgedAt),
-              botError: row.botError,
-              used: row.used,
-              discordUser: row.discordId
-                ? {
-                    id: row.discordId,
-                    username: row.discordUsername,
-                    avatar: row.discordAvatar,
-                    createdAt: snowflakeToDate(row.discordId).toISOString(),
-                  }
-                : null,
-            } as const;
-            return Response.json(result);
-          }
-          if (row.status === "bot_update_pending") {
-            return Response.json({
-              valid: true,
-              pendingPassed: Boolean(row.completedAt),
-              userId: row.userId,
-              guildId: row.guildId,
-              guildName: row.guildName,
-              guildMemberCount: row.guildMemberCount ?? 0,
-              expiresAt: row.expiresAt.toISOString(),
-              status: row.status,
-              referenceId: row.referenceId,
-              attempts: row.attempts,
-              failureReason: row.failureReason,
-              botAcknowledged: Boolean(row.botAcknowledgedAt),
-              botError: row.botError,
-              used: row.used,
-              discordUser: row.discordId
-                ? {
-                    id: row.discordId,
-                    username: row.discordUsername,
-                    avatar: row.discordAvatar,
-                    createdAt: snowflakeToDate(row.discordId).toISOString(),
-                  }
-                : null,
-            });
-          }
-          if (row.status === "locked" || (row.attempts ?? 0) >= 3) {
-            const result = {
-              valid: false,
-              reason: "lockout",
-              attempts: row.attempts,
-              failureReason: row.failureReason,
-              referenceId: row.referenceId,
-            } as const;
-            return Response.json(result);
-          }
-          if (row.cooldownUntil && row.cooldownUntil.getTime() > Date.now()) {
-            const result = {
-              valid: false,
-              reason: "cooldown",
-              attempts: row.attempts,
-              cooldownUntil: row.cooldownUntil.toISOString(),
-              failureReason: row.failureReason,
-              referenceId: row.referenceId,
-            } as const;
-            return Response.json(result);
-          }
-          if (row.used && !["completed", "bot_update_pending"].includes(row.status)) {
-            const result = { valid: false, reason: "used" } as const;
-            return Response.json(result);
-          }
-          if (row.expiresAt.getTime() < Date.now()) {
-            const result = { valid: false, reason: "expired" } as const;
-            return Response.json(result);
-          }
-          const result = {
-            valid: true,
+          const db = getDb();
+          const row = (
+            await db.select().from(verifyTokens).where(eq(verifyTokens.token, token)).limit(1)
+          )[0];
+          if (!row) return Response.json({ valid: false, reason: "invalid" });
+          const state = (
+            await db
+              .select()
+              .from(verificationState)
+              .where(
+                and(
+                  eq(verificationState.guildId, row.guildId),
+                  eq(verificationState.userId, row.userId),
+                ),
+              )
+              .limit(1)
+          )[0];
+          const attempts = state?.attempts ?? row.attempts;
+          const discordUser = row.discordId
+            ? {
+                id: row.discordId,
+                username: row.discordUsername,
+                avatar: row.discordAvatar,
+                createdAt: snowflakeToDate(row.discordId).toISOString(),
+              }
+            : null;
+          const common = {
             userId: row.userId,
             guildId: row.guildId,
             guildName: row.guildName,
@@ -113,24 +43,54 @@ export const Route = createFileRoute("/api/verify/$token")({
             expiresAt: row.expiresAt.toISOString(),
             status: row.status,
             referenceId: row.referenceId,
-            attempts: row.attempts,
-            cooldownUntil: row.cooldownUntil?.toISOString() ?? null,
+            attempts,
             failureReason: row.failureReason,
             botAcknowledged: Boolean(row.botAcknowledgedAt),
             botError: row.botError,
             used: row.used,
-            discordUser: row.discordId
-              ? {
-                  id: row.discordId,
-                  username: row.discordUsername,
-                  avatar: row.discordAvatar,
-                  createdAt: snowflakeToDate(row.discordId).toISOString(),
-                }
-              : null,
+            discordUser,
           };
-          return Response.json(result);
-        } catch (e) {
-          console.error("[verify/token] Lookup failed:", e instanceof Error ? e.name : "unknown");
+          if (row.status === "completed")
+            return Response.json({ valid: true, completed: true, ...common });
+          if (row.status === "bot_update_pending") {
+            return Response.json({
+              valid: true,
+              pendingPassed: Boolean(row.completedAt),
+              ...common,
+            });
+          }
+          if (row.status === "locked" || state?.lockedAt || attempts >= 3) {
+            return Response.json({
+              valid: false,
+              reason: "lockout",
+              attempts,
+              failureReason: row.failureReason,
+              referenceId: row.referenceId,
+            });
+          }
+          if (state?.cooldownUntil && state.cooldownUntil.getTime() > Date.now()) {
+            return Response.json({
+              valid: false,
+              reason: "cooldown",
+              attempts,
+              cooldownUntil: state.cooldownUntil.toISOString(),
+              failureReason: row.failureReason,
+              referenceId: row.referenceId,
+            });
+          }
+          if (row.used) return Response.json({ valid: false, reason: "used" });
+          if (row.expiresAt.getTime() < Date.now())
+            return Response.json({ valid: false, reason: "expired" });
+          return Response.json({
+            valid: true,
+            ...common,
+            cooldownUntil: state?.cooldownUntil?.toISOString() ?? null,
+          });
+        } catch (error) {
+          console.error(
+            "[verify/token] Lookup failed:",
+            error instanceof Error ? error.name : "unknown",
+          );
           return Response.json({ valid: false, reason: "error" }, { status: 500 });
         }
       },

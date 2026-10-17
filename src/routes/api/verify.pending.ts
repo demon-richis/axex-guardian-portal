@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { and, desc, eq, gt } from "drizzle-orm";
+import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import { z } from "zod";
 
 const Id = z.string().min(1).max(40);
@@ -17,52 +17,66 @@ export const Route = createFileRoute("/api/verify/pending")({
         const userId = Id.safeParse(url.searchParams.get("userId"));
         const guildId = Id.safeParse(url.searchParams.get("guildId"));
         if (!userId.success || !guildId.success) {
-          console.error("[verify/pending] Missing or invalid userId/guildId");
           return Response.json({ error: "Missing or invalid userId or guildId" }, { status: 400 });
         }
-        console.log("[verify/pending] Checking pending token");
 
         try {
-          const { verifyTokens } = await import("@/lib/db/schema");
+          const { verificationState, verifyTokens } = await import("@/lib/db/schema");
           const { getDb } = await import("@/lib/db/client.server");
-          const existing = await getDb()
+          const db = getDb();
+          const state = (
+            await db
+              .select()
+              .from(verificationState)
+              .where(
+                and(
+                  eq(verificationState.userId, userId.data),
+                  eq(verificationState.guildId, guildId.data),
+                ),
+              )
+              .limit(1)
+          )[0];
+          const existing = await db
             .select({
               token: verifyTokens.token,
               status: verifyTokens.status,
-              attempts: verifyTokens.attempts,
-              cooldownUntil: verifyTokens.cooldownUntil,
               failureReason: verifyTokens.failureReason,
               expiresAt: verifyTokens.expiresAt,
+              referenceId: verifyTokens.referenceId,
             })
             .from(verifyTokens)
             .where(
               and(
                 eq(verifyTokens.userId, userId.data),
                 eq(verifyTokens.guildId, guildId.data),
-                gt(verifyTokens.expiresAt, new Date()),
+                inArray(verifyTokens.status, ["pending", "bot_update_pending"]),
               ),
             )
             .orderBy(desc(verifyTokens.createdAt))
             .limit(1);
 
           const row = existing[0];
-          const locked = row?.status === "locked" || (row?.attempts ?? 0) >= 3;
+          const attempts = state?.attempts ?? 0;
+          const locked = Boolean(state?.lockedAt) || attempts >= 3;
           const coolingDown = Boolean(
-            row?.cooldownUntil && row.cooldownUntil.getTime() > Date.now(),
+            state?.cooldownUntil && state.cooldownUntil.getTime() > Date.now(),
           );
           const token =
-            row && !locked && !coolingDown && row.status !== "completed" ? row.token : null;
+            row && row.expiresAt.getTime() > Date.now() && !locked && !coolingDown
+              ? row.token
+              : null;
           console.log("[verify/pending] Result:", {
             state: locked ? "locked" : coolingDown ? "cooldown" : token ? "found" : "not found",
-            attempts: row?.attempts ?? 0,
+            attempts,
           });
           return Response.json({
             token,
             status: row?.status ?? null,
-            attempts: row?.attempts ?? 0,
+            attempts,
             locked,
-            cooldownUntil: row?.cooldownUntil?.toISOString() ?? null,
+            cooldownUntil: state?.cooldownUntil?.toISOString() ?? null,
             failureReason: row?.failureReason ?? null,
+            referenceId: state?.lastReferenceId ?? row?.referenceId ?? null,
           });
         } catch (error) {
           console.error("[verify/pending] Error:", error instanceof Error ? error.name : "unknown");

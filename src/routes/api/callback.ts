@@ -51,7 +51,7 @@ export const Route = createFileRoute("/api/callback")({
               import("@/lib/db/schema"),
               import("@/lib/verification-submit.server"),
             ]);
-          const { token, challengeId, answer } = parsed.data;
+          const { token, challengeId, turnstileToken } = parsed.data;
           const db = getDb();
           const row = (
             await db.select().from(verifyTokens).where(eq(verifyTokens.token, token)).limit(1)
@@ -89,7 +89,7 @@ export const Route = createFileRoute("/api/callback")({
           const result = await submitVerificationChallenge(db, {
             token,
             challengeId,
-            answer,
+            turnstileToken,
             discordId: parsed.data.discordId,
             discordTag: parsed.data.discordTag,
             discordAvatar: parsed.data.discordAvatar,

@@ -39,7 +39,12 @@ export const Route = createFileRoute("/api/challenge")({
             import("@/lib/verification-challenge.server"),
           ]);
           const result = await issueVerificationChallenge(getDb(), parsed.data.token);
-          if (result.success) return Response.json(result);
+          if (result.success) {
+            return Response.json({
+              ...result,
+              siteKey: process.env["TURNSTILE_SITE_KEY"] ?? "",
+            });
+          }
           const status =
             result.error === "invalid_token" ||
             result.error === "expired" ||

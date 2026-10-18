@@ -27,6 +27,10 @@ export const Route = createFileRoute("/api/callback")({
         if (!parsed.success) {
           return Response.json({ success: false, error: "invalid_request" }, { status: 400 });
         }
+        const { unauthorizedSessionResponse, verifySession } = await import("@/lib/session.server");
+        if (!verifySession(request, parsed.data.token, parsed.data.discordId)) {
+          return unauthorizedSessionResponse();
+        }
         const tokenFingerprint = createHash("sha256").update(parsed.data.token).digest("hex");
         const tokenLimit = rateLimit(`callback-token:${tokenFingerprint}`, 12, 60_000);
         if (!tokenLimit.allowed) {

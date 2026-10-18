@@ -7,13 +7,24 @@ export const Route = createFileRoute("/api/auth/callback")({
         console.log("[auth/callback] OAuth callback received");
         const { getDb, redirectUri } = await import("@/lib/db/client.server");
         const { bindOAuthIdentity } = await import("@/lib/discord-identity.server");
+        const { consumeOAuthState, createSessionCookie } = await import("@/lib/session.server");
         const url = new URL(request.url);
         const code = url.searchParams.get("code");
-        const token = url.searchParams.get("state") ?? "";
-        const back = (q: string) =>
-          Response.redirect(`${url.origin}/verify?token=${encodeURIComponent(token)}&${q}`, 302);
-        if (!code || !token) {
-          console.error("[auth/callback] Missing OAuth code or state token");
+        const stateNonce = url.searchParams.get("state") ?? "";
+        const state = stateNonce ? consumeOAuthState(request, stateNonce) : null;
+        const back = (query: string, sessionCookie?: string) => {
+          const destination = new URL("/verify", url.origin);
+          if (state?.token) destination.searchParams.set("token", state.token);
+          for (const [key, value] of new URLSearchParams(query)) {
+            destination.searchParams.set(key, value);
+          }
+          const response = Response.redirect(destination.toString(), 302);
+          if (state) response.headers.append("Set-Cookie", state.clearCookie);
+          if (sessionCookie) response.headers.append("Set-Cookie", sessionCookie);
+          return response;
+        };
+        if (!code || !state) {
+          console.error("[auth/callback] Missing, mismatched, or expired OAuth state");
           return back("error=auth");
         }
         try {
@@ -46,7 +57,7 @@ export const Route = createFileRoute("/api/auth/callback")({
             global_name?: string | null;
             avatar: string | null;
           };
-          const binding = await bindOAuthIdentity(getDb(), token, {
+          const binding = await bindOAuthIdentity(getDb(), state.token, {
             id: user.id,
             username: user.username,
             globalName: user.global_name,
@@ -57,7 +68,7 @@ export const Route = createFileRoute("/api/auth/callback")({
             return back("error=auth");
           }
           console.log("[auth/callback] OAuth identity matched the bot-issued target");
-          return back("auth=1");
+          return back("auth=1", createSessionCookie(state.token, user.id));
         } catch (e) {
           console.error("[auth/callback] Failed:", e instanceof Error ? e.name : "unknown");
           return back("error=auth");

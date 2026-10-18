@@ -23,6 +23,8 @@ export const Route = createFileRoute("/api/challenge")({
         if (!parsed.success) {
           return Response.json({ success: false, error: "invalid_request" }, { status: 400 });
         }
+        const { unauthorizedSessionResponse, verifySession } = await import("@/lib/session.server");
+        if (!verifySession(request, parsed.data.token)) return unauthorizedSessionResponse();
         const tokenFingerprint = createHash("sha256").update(parsed.data.token).digest("hex");
         const tokenLimit = rateLimit(`challenge-token:${tokenFingerprint}`, 12, 60_000);
         if (!tokenLimit.allowed) {

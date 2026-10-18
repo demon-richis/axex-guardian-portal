@@ -1,0 +1,40 @@
+const CONTENT_SECURITY_POLICY = [
+  "default-src 'self'",
+  "base-uri 'self'",
+  "object-src 'none'",
+  "frame-ancestors 'none'",
+  "script-src 'self' https://challenges.cloudflare.com https://discord.com https://cdn.discordapp.com",
+  "style-src 'self' 'unsafe-inline'",
+  "img-src 'self' data: https://cdn.discordapp.com https://*.discordapp.com",
+  "font-src 'self'",
+  "connect-src 'self' https://challenges.cloudflare.com https://discord.com",
+  "frame-src 'none' https://challenges.cloudflare.com",
+].join("; ");
+
+export function applySecurityHeaders(request: Request, response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set("Content-Security-Policy", CONTENT_SECURITY_POLICY);
+  headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+  headers.set("X-Content-Type-Options", "nosniff");
+  headers.set("Referrer-Policy", "no-referrer");
+  headers.set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()");
+  headers.set("Cross-Origin-Opener-Policy", "same-origin");
+  if (new URL(request.url).pathname.startsWith("/api/")) {
+    headers.set("Cache-Control", "no-store");
+  }
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+export function validateRuntimeEnvironment(
+  env: NodeJS.ProcessEnv = process.env,
+  isProduction = env["NODE_ENV"] === "production",
+): void {
+  const sessionSecret = env["SESSION_SECRET"]?.trim();
+  if (isProduction && (!sessionSecret || sessionSecret.length < 32)) {
+    throw new Error("SESSION_SECRET must be configured with at least 32 characters in production");
+  }
+}

@@ -1,16 +1,17 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import type { getDb } from "./db/client.server";
 import { auditLogs, suspiciousAttempts, verifyTokens } from "./db/schema.ts";
-import { answerMatches, hashChallengeAnswer } from "./verification-challenge.server.ts";
 import { ensureVerificationState } from "./verification-state.server.ts";
+import { verifyTurnstile } from "./turnstile.server.ts";
 
 type PortalDb = ReturnType<typeof getDb>;
 
 export type ChallengeSubmission = {
   token: string;
   challengeId: string;
-  answer: string;
+  answer?: string | undefined;
+  turnstileToken?: string | undefined;
   discordId?: string | undefined;
   discordTag?: string | undefined;
   discordAvatar?: string | null | undefined;
@@ -24,6 +25,8 @@ export type ChallengeSubmission = {
   observedIp: string;
   isVpn: boolean;
   vpnTypeDetected: string | null;
+  turnstileFetch?: typeof fetch | undefined;
+  turnstileEnvironment?: NodeJS.ProcessEnv | undefined;
   now?: Date | undefined;
 };
 
@@ -58,13 +61,11 @@ export async function submitVerificationChallenge(
   const state = await ensureVerificationState(db, row.guildId, row.userId, now);
   if (!state) return { success: false, error: "invalid_token", httpStatus: 400 };
 
-  const submittedDigest = hashChallengeAnswer(
-    input.challengeId,
-    input.answer,
-    input.token,
-    row.discordId ?? "",
-    row.guildId,
-  );
+  const submittedDigest = createHash("sha256")
+    .update(
+      `${input.token}\u0000${row.discordId ?? ""}\u0000${row.guildId}\u0000${input.challengeId}\u0000${input.turnstileToken ?? ""}`,
+    )
+    .digest("hex");
   if (
     row.challengeId === input.challengeId &&
     row.challengeConsumedAt &&
@@ -121,7 +122,7 @@ export async function submitVerificationChallenge(
   if (
     !row.challengeId ||
     row.challengeId !== input.challengeId ||
-    !row.challengeAnswerHash ||
+    !row.challengeIssuedAt ||
     !row.challengeExpiresAt ||
     row.challengeExpiresAt.getTime() <= now.getTime() ||
     row.challengeConsumedAt
@@ -132,18 +133,34 @@ export async function submitVerificationChallenge(
     return { success: false, error: "missing_reference", httpStatus: 503 };
   }
 
-  const proofCorrect = answerMatches(input.challengeId, input.answer, row.challengeAnswerHash, {
-    token: input.token,
-    discordId: row.discordId,
-    guildId: row.guildId,
-  });
+  const responseTimeMs = Math.max(0, now.getTime() - row.challengeIssuedAt.getTime());
+  const turnstile = await verifyTurnstile(
+    input.turnstileToken,
+    {
+      token: input.token,
+      discordId: row.discordId,
+      guildId: row.guildId,
+      challengeId: input.challengeId,
+      remoteIp: input.observedIp,
+    },
+    input.turnstileEnvironment ?? process.env,
+    input.turnstileFetch,
+  );
+  if (!turnstile.ok) {
+    return {
+      success: false,
+      error: turnstile.error,
+      httpStatus: turnstile.error === "turnstile_unavailable" ? 503 : 403,
+    };
+  }
+  const proofCorrect = true;
   const attempts = state.attempts + 1;
   const accountAgeDays = ageInDays(row.discordId, now);
   const clickMs = input.clickMs ?? null;
   const honeypotTriggered = Boolean(input.honeypotTriggered || input.honeypot?.trim());
   const vpnDetected = input.isVpn || input.vpnDetected === true;
   const vpnType = input.vpnTypeDetected ?? input.vpnType ?? null;
-  const botDetected = honeypotTriggered || (clickMs !== null && clickMs < 1500);
+  const botDetected = honeypotTriggered;
   const sameIpUsers = input.observedIp
     ? Number(
         (
@@ -159,17 +176,11 @@ export async function submitVerificationChallenge(
       ? "VPN or proxy detected"
       : accountAgeDays < 3
         ? "New Discord account"
-        : clickMs !== null && clickMs < 800
-          ? "Unusually fast response"
-          : clickMs !== null && clickMs > 58_000
-            ? "Response near timeout"
-            : attempts >= 2
-              ? "Repeated verification attempt"
-              : sameIpUsers >= 3
-                ? "Shared IP used by multiple users"
-                : !proofCorrect
-                  ? "Wrong challenge answer"
-                  : null;
+        : attempts >= 2
+          ? "Repeated verification attempt"
+          : sameIpUsers >= 3
+            ? "Shared IP used by multiple users"
+            : null;
   const flagged = Boolean(automaticReason);
   const finalPassed = proofCorrect && !vpnDetected && !botDetected && accountAgeDays >= 3;
   const locked = !finalPassed && (attempts >= 3 || vpnDetected);
@@ -187,9 +198,7 @@ export async function submitVerificationChallenge(
       ? "VPN_BLOCKED"
       : finalPassed
         ? "VERIFIED"
-        : input.timeout || (clickMs !== null && clickMs > 58_000)
-          ? "TIMEOUT"
-          : "WRONG_ANSWER";
+        : "WRONG_ANSWER";
   const reason = automaticReason ?? (finalPassed ? null : (input.failureReason ?? event));
   const callbackStatus = terminal ? "bot_update_pending" : "failed";
   const claimId = randomUUID();
@@ -209,11 +218,12 @@ export async function submitVerificationChallenge(
     honeypotTriggered,
     accountAgeDays,
     clickMs,
+    responseTimeMs,
     flagged,
     flagReason: reason,
     attempts,
     cooldownUntil: cooldownUntil?.toISOString() ?? null,
-    failureReason: input.timeout ? "TIMEOUT" : !finalPassed ? reason : null,
+    failureReason: !finalPassed ? reason : null,
     locked,
   };
 
@@ -251,6 +261,7 @@ export async function submitVerificationChallenge(
           status = ${callbackStatus},
           cooldown_until = ${cooldownUntil},
           failure_reason = ${reason},
+          response_time_ms = ${responseTimeMs},
           discord_tag = ${safeTag},
           discord_avatar = ${safeAvatar},
           ip_address = ${input.observedIp || null},
@@ -263,7 +274,6 @@ export async function submitVerificationChallenge(
       WHERE token = ${input.token}
         AND discord_id = ${row.discordId}
         AND challenge_id = ${input.challengeId}
-        AND challenge_answer_hash = ${row.challengeAnswerHash}
         AND used = FALSE
         AND challenge_consumed_at IS NULL
         AND challenge_expires_at > ${now}

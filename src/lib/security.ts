@@ -37,4 +37,10 @@ export function validateRuntimeEnvironment(
   if (isProduction && (!sessionSecret || sessionSecret.length < 32)) {
     throw new Error("SESSION_SECRET must be configured with at least 32 characters in production");
   }
+  if (
+    isProduction &&
+    (!env["TURNSTILE_SITE_KEY"]?.trim() || !env["TURNSTILE_SECRET_KEY"]?.trim())
+  ) {
+    throw new Error("TURNSTILE_SITE_KEY and TURNSTILE_SECRET_KEY are required in production");
+  }
 }

@@ -28,18 +28,15 @@ export const Route = createFileRoute("/verify")({
 
 type Challenge = {
   challengeId: string;
-  prompt: string;
-  options: string[];
   expiresAt: string;
+  turnstileCData: string;
 };
 
 const DEMO_CHALLENGE: Challenge = {
   challengeId: "demo-local",
-  prompt: "What is 5 + 3?",
-  options: ["7", "9", "6", "8"],
   expiresAt: "",
+  turnstileCData: "demo-local",
 };
-const DEMO_ANSWER = "8";
 
 type TokenInfo = {
   guildName: string;
@@ -167,6 +164,7 @@ function VerifyPage() {
   const [cooldownSeconds, setCooldownSeconds] = useState<number | null>(null);
   const [loadingStage, setLoadingStage] = useState(0);
   const [challenge, setChallenge] = useState<Challenge | null>(null);
+  const [turnstileSiteKey, setTurnstileSiteKey] = useState("");
 
   const attemptKey = `axex:verify-attempts:${effectiveToken}`;
 
@@ -256,11 +254,13 @@ function VerifyPage() {
           const challengeResult = (await challengeResponse.json()) as {
             success?: boolean;
             challenge?: Challenge;
+            siteKey?: string;
           };
           if (!challengeResult.success || !challengeResult.challenge) {
             throw new Error("The server did not issue a verification challenge");
           }
           setChallenge(challengeResult.challenge);
+          setTurnstileSiteKey(challengeResult.siteKey ?? "");
           setPhase("captcha");
         } else {
           track(token, "network_unavailable");
@@ -417,17 +417,11 @@ function VerifyPage() {
   }, [demoMode, fail, phase, token]);
 
   const submitAttempt = useCallback(
-    async (
-      answer: string,
-      clickMs: number,
-      timeout = false,
-      failureReason?: "WRONG_ANSWER" | "TIMEOUT" | "BOT_DETECTED" | "VPN_BLOCKED",
-      honeypotTriggered = false,
-    ) => {
-      console.log("[verify] Submitting server challenge proof:", { timeout, honeypotTriggered });
+    async (turnstileToken: string, clickMs: number, honeypotTriggered = false) => {
+      console.log("[verify] Submitting Turnstile proof:", { honeypotTriggered });
       if (demoMode) {
         console.log("[verify] Demo result accepted locally");
-        return { success: true, passed: answer === DEMO_ANSWER };
+        return { success: true, passed: turnstileToken === "dev-bypass" };
       }
       const u = info?.discordUser;
       if (!challenge?.challengeId) return null;
@@ -437,13 +431,11 @@ function VerifyPage() {
         body: JSON.stringify({
           token,
           challengeId: challenge.challengeId,
-          answer,
+          turnstileToken,
           discordId: u?.id,
           discordTag: u?.username,
           discordAvatar: u?.avatar,
           clickMs,
-          timeout,
-          failureReason,
           honeypotTriggered,
         }),
       }).catch((requestError: unknown) => {
@@ -472,14 +464,8 @@ function VerifyPage() {
   );
 
   const submitAnswer = useCallback(
-    async (answer: string, clickMs: number, timeout = false, honeypotTriggered = false) => {
-      const result = await submitAttempt(
-        answer,
-        clickMs,
-        timeout,
-        timeout ? "TIMEOUT" : undefined,
-        honeypotTriggered,
-      );
+    async (turnstileToken: string, clickMs: number, honeypotTriggered = false) => {
+      const result = await submitAttempt(turnstileToken, clickMs, honeypotTriggered);
       if (result?.success && result.passed) {
         console.log("[verify] Server accepted the challenge proof");
         track(token, "captcha_passed");
@@ -506,8 +492,6 @@ function VerifyPage() {
           setPhase("cooldown");
         } else if (result?.locked || serverAttempts >= 3) {
           fail("lockout");
-        } else if (timeout) {
-          fail("timeout");
         } else {
           fail(result?.error === "network_check_unavailable" ? "network" : "generic");
         }
@@ -684,6 +668,8 @@ function VerifyPage() {
                 user={user}
                 ageDays={ageDays ?? 0}
                 challenge={challenge}
+                siteKey={turnstileSiteKey}
+                demoMode={demoMode}
                 onSubmit={submitAnswer}
               />
             </motion.div>
@@ -1016,46 +1002,79 @@ function Captcha({
   user,
   ageDays,
   challenge,
+  siteKey,
+  demoMode,
   onSubmit,
 }: {
   info: TokenInfo;
   user: NonNullable<TokenInfo["discordUser"]>;
   ageDays: number;
   challenge: Challenge;
-  onSubmit: (
-    answer: string,
-    clickMs: number,
-    timeout?: boolean,
-    honeypotTriggered?: boolean,
-  ) => Promise<void>;
+  siteKey: string;
+  demoMode: boolean;
+  onSubmit: (turnstileToken: string, clickMs: number, honeypotTriggered?: boolean) => Promise<void>;
 }) {
-  const [left, setLeft] = useState(60);
-  const [selected, setSelected] = useState<string | null>(null);
   const [honeypotTriggered, setHoneypotTriggered] = useState(false);
-  const done = useRef(false);
+  const widgetRef = useRef<HTMLDivElement>(null);
+  const widgetId = useRef<string | null>(null);
   const startedAt = useRef(Date.now());
-
-  useEffect(() => {
-    const id = setInterval(() => setLeft((s) => Math.max(0, s - 1)), 1000);
-    return () => clearInterval(id);
-  }, []);
-  useEffect(() => {
-    if (left === 0 && !done.current) {
-      done.current = true;
-      void onSubmit("", Date.now() - startedAt.current, true, honeypotTriggered);
-    }
-  }, [honeypotTriggered, left, onSubmit]);
-
-  const pick = (opt: string) => {
-    if (done.current) return;
-    done.current = true;
-    setSelected(opt);
-    void onSubmit(opt, Date.now() - startedAt.current, false, honeypotTriggered);
-  };
+  const done = useRef(false);
 
   const avatar = user.avatar
     ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=128`
     : `https://cdn.discordapp.com/embed/avatars/${Number(BigInt(user.id) >> 22n) % 6}.png`;
+
+  useEffect(() => {
+    if (demoMode || !siteKey || !widgetRef.current) return;
+    type TurnstileApi = {
+      render: (element: HTMLElement, options: Record<string, unknown>) => string;
+      remove?: (id: string) => void;
+    };
+    const render = () => {
+      const turnstile = (window as Window & { turnstile?: TurnstileApi }).turnstile;
+      if (!turnstile || !widgetRef.current || done.current) return;
+      widgetId.current = turnstile.render(widgetRef.current, {
+        sitekey: siteKey,
+        action: "axex_verify",
+        cData: challenge.turnstileCData,
+        callback: (token: string) => {
+          if (done.current) return;
+          done.current = true;
+          void onSubmit(token, Date.now() - startedAt.current, honeypotTriggered);
+        },
+        "expired-callback": () => {
+          if (done.current) return;
+          done.current = true;
+          void onSubmit("", Date.now() - startedAt.current, honeypotTriggered);
+        },
+        "error-callback": () => {
+          if (done.current) return;
+          done.current = true;
+          void onSubmit("", Date.now() - startedAt.current, honeypotTriggered);
+        },
+      });
+    };
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[src^="https://challenges.cloudflare.com/turnstile/"]',
+    );
+    if (existing) {
+      if ((window as Window & { turnstile?: TurnstileApi }).turnstile) render();
+      else existing.addEventListener("load", render, { once: true });
+    } else {
+      const script = document.createElement("script");
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.defer = true;
+      script.addEventListener("load", render, { once: true });
+      document.head.appendChild(script);
+    }
+    return () => {
+      if (widgetId.current) {
+        (window as Window & { turnstile?: TurnstileApi }).turnstile?.remove?.(widgetId.current);
+      }
+      widgetId.current = null;
+    };
+  }, [challenge.turnstileCData, demoMode, honeypotTriggered, onSubmit, siteKey]);
 
   return (
     <motion.div className="space-y-4">
@@ -1087,19 +1106,6 @@ function Captcha({
           Skip verification
         </button>
       </div>
-      <div>
-        <div className="mb-1.5 flex justify-between text-[11px] text-muted-foreground">
-          <span>Time remaining</span>
-          <span className="tabular-nums">0:{String(left).padStart(2, "0")}</span>
-        </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-[var(--pill)]">
-          <div
-            className="h-full rounded-full bg-gradient-to-r from-[var(--red)] to-[var(--green)] transition-[width] duration-1000 ease-linear"
-            style={{ width: `${(left / 60) * 100}%` }}
-          />
-        </div>
-      </div>
-
       <div className="flex items-center gap-3 rounded-xl border border-border bg-[var(--surface)] p-3">
         <img
           src={avatar}
@@ -1132,30 +1138,14 @@ function Captcha({
         <p className="text-[10px] uppercase tracking-[0.8px] text-[var(--faint-2)]">
           Human Verification
         </p>
-        <p className="mt-1.5 text-sm text-foreground">{challenge.prompt}</p>
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          {challenge.options.map((o) => {
-            const isSelected = selected === o;
-            return (
-              <motion.button
-                key={o}
-                type="button"
-                onClick={() => pick(o)}
-                disabled={selected !== null}
-                animate={isSelected ? { scale: [1, 1.03, 1] } : {}}
-                transition={{ duration: 0.6 }}
-                aria-label={`Answer: ${o}`}
-                className={`min-h-11 rounded-lg border px-3 py-2.5 text-sm text-foreground transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--green)] ${
-                  isSelected
-                    ? "border-[var(--amber)] bg-[var(--amber)]/10"
-                    : "border-[var(--surface-border-2)] bg-[var(--surface-2)] hover:border-[var(--green)]/30 hover:bg-[var(--green-soft)]"
-                }`}
-              >
-                {o}
-              </motion.button>
-            );
-          })}
-        </div>
+        <p className="mt-1.5 text-sm text-foreground">Complete the security check to continue.</p>
+        {demoMode || !siteKey ? (
+          <PrimaryButton onClick={() => void onSubmit("dev-bypass", 0, honeypotTriggered)}>
+            {demoMode ? "Complete demo verification" : "Complete local verification"}
+          </PrimaryButton>
+        ) : (
+          <div ref={widgetRef} className="mt-3 flex min-h-[65px] justify-center" />
+        )}
       </div>
       <p className="text-center text-[11px] text-[var(--faint)]">Verifying for {info.guildName}</p>
     </motion.div>

@@ -1,6 +1,9 @@
 import { createStart, createCsrfMiddleware, createMiddleware } from "@tanstack/react-start";
 
 import { renderErrorPage } from "./lib/error-page";
+import { applySecurityHeaders, validateRuntimeEnvironment } from "./lib/security";
+
+validateRuntimeEnvironment();
 
 if (process.env["BOT_WEBHOOK_URL"]) {
   console.log("[portal] Bot verification callback configured");
@@ -45,6 +48,11 @@ const csrfMiddleware = createCsrfMiddleware({
   filter: (ctx) => ctx.handlerType === "serverFn",
 });
 
+const securityHeadersMiddleware = createMiddleware().server(async ({ request, next }) => {
+  const response = await next();
+  return applySecurityHeaders(request, response as unknown as Response);
+});
+
 export const startInstance = createStart(() => ({
-  requestMiddleware: [errorMiddleware, csrfMiddleware],
+  requestMiddleware: [securityHeadersMiddleware, errorMiddleware, csrfMiddleware],
 }));

@@ -15,6 +15,7 @@ const migrationFiles = [
   "0002_absent_goblin_queen.sql",
   "0003_server_verified_challenge_outbox.sql",
   "0004_durable_verification_state.sql",
+  "0005_turnstile_challenge_timing.sql",
 ];
 const TEST_API_KEY = "unit-test-api-key-only";
 const originalRetentionDays = process.env.AXEX_RETENTION_DAYS;

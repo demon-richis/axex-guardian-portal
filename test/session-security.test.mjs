@@ -122,7 +122,15 @@ test("production startup validation requires a sufficiently strong session secre
     /SESSION_SECRET/,
   );
   assert.doesNotThrow(() =>
-    validateRuntimeEnvironment({ NODE_ENV: "production", SESSION_SECRET: "a".repeat(32) }, true),
+    validateRuntimeEnvironment(
+      {
+        NODE_ENV: "production",
+        SESSION_SECRET: "a".repeat(32),
+        TURNSTILE_SITE_KEY: "site-key",
+        TURNSTILE_SECRET_KEY: "secret-key",
+      },
+      true,
+    ),
   );
   assert.doesNotThrow(() => validateRuntimeEnvironment({ NODE_ENV: "development" }, false));
 });

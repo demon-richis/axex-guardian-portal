@@ -5,9 +5,10 @@ export const Route = createFileRoute("/api/auth/callback")({
     handlers: {
       GET: async ({ request }) => {
         console.log("[auth/callback] OAuth callback received");
-        const { getDb, redirectUri } = await import("@/lib/db/client.server");
-        const { bindOAuthIdentity } = await import("@/lib/discord-identity.server");
-        const { consumeOAuthState, createSessionCookie } = await import("@/lib/session.server");
+        const { getDb, redirectUri } = await import("../../lib/db/client.server.ts");
+        const { bindOAuthIdentity } = await import("../../lib/discord-identity.server.ts");
+        const { consumeOAuthState, createSessionCookie } =
+          await import("../../lib/session.server.ts");
         const url = new URL(request.url);
         const code = url.searchParams.get("code");
         const stateNonce = url.searchParams.get("state") ?? "";
@@ -18,10 +19,10 @@ export const Route = createFileRoute("/api/auth/callback")({
           for (const [key, value] of new URLSearchParams(query)) {
             destination.searchParams.set(key, value);
           }
-          const response = Response.redirect(destination.toString(), 302);
-          if (state) response.headers.append("Set-Cookie", state.clearCookie);
-          if (sessionCookie) response.headers.append("Set-Cookie", sessionCookie);
-          return response;
+          const headers = new Headers({ Location: destination.toString() });
+          if (state) headers.append("Set-Cookie", state.clearCookie);
+          if (sessionCookie) headers.append("Set-Cookie", sessionCookie);
+          return new Response(null, { status: 302, headers });
         };
         if (!code || !state) {
           console.error("[auth/callback] Missing, mismatched, or expired OAuth state");

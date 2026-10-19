@@ -23,6 +23,7 @@ export type ChallengeSubmission = {
   vpnDetected?: boolean | undefined;
   vpnType?: string | null | undefined;
   observedIp: string;
+  requestHostname: string;
   isVpn: boolean;
   vpnTypeDetected: string | null;
   turnstileFetch?: typeof fetch | undefined;
@@ -141,6 +142,7 @@ export async function submitVerificationChallenge(
       discordId: row.discordId,
       guildId: row.guildId,
       challengeId: input.challengeId,
+      requestHostname: input.requestHostname,
       remoteIp: input.observedIp,
     },
     input.turnstileEnvironment ?? process.env,

@@ -101,6 +101,7 @@ export const Route = createFileRoute("/api/callback")({
             vpnDetected: parsed.data.vpnDetected,
             vpnType: parsed.data.vpnType,
             observedIp,
+            requestHostname: new URL(request.url).hostname,
             isVpn,
             vpnTypeDetected,
           });

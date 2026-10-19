@@ -7,6 +7,7 @@ type SiteVerifyResponse = {
   success?: boolean;
   action?: string;
   cdata?: string;
+  hostname?: string;
   "error-codes"?: string[];
 };
 
@@ -31,6 +32,7 @@ export async function verifyTurnstile(
     discordId: string;
     guildId: string;
     challengeId: string;
+    requestHostname: string;
     remoteIp?: string;
   },
   nowEnv: NodeJS.ProcessEnv = process.env,
@@ -60,9 +62,13 @@ export async function verifyTurnstile(
     });
     if (!response.ok) return { ok: false, error: "turnstile_unavailable" };
     const result = (await response.json()) as SiteVerifyResponse;
+    const expectedHostname = (nowEnv["PORTAL_HOSTNAME"]?.trim() || context.requestHostname)
+      .toLowerCase()
+      .replace(/\.$/, "");
     if (
       result.success !== true ||
       result.action !== TURNSTILE_ACTION ||
+      result.hostname?.toLowerCase().replace(/\.$/, "") !== expectedHostname ||
       result.cdata !==
         turnstileContext(context.token, context.discordId, context.guildId, context.challengeId)
     ) {

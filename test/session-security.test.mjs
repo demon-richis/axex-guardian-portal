@@ -96,13 +96,21 @@ test("security headers cover pages and API responses", () => {
   const page = applySecurityHeaders(
     request("https://portal.test/verify"),
     new Response("page", { status: 200 }),
+    "test-nonce",
   );
   const api = applySecurityHeaders(
     request("https://portal.test/api/challenge"),
     new Response("{}", { status: 200 }),
+    "test-nonce",
   );
   for (const response of [page, api]) {
-    assert.match(response.headers.get("content-security-policy") ?? "", /frame-ancestors 'none'/);
+    const csp = response.headers.get("content-security-policy") ?? "";
+    assert.match(csp, /frame-ancestors 'none'/);
+    assert.match(csp, /script-src 'self' 'nonce-test-nonce' https:\/\/challenges\.cloudflare\.com/);
+    assert.match(csp, /style-src 'self' 'unsafe-inline' https:\/\/fonts\.googleapis\.com/);
+    assert.match(csp, /font-src 'self' https:\/\/fonts\.gstatic\.com/);
+    assert.match(csp, /frame-src https:\/\/challenges\.cloudflare\.com/);
+    assert.doesNotMatch(csp, /script-src[^;]*unsafe-inline|frame-src[^;]*'none'/);
     assert.equal(
       response.headers.get("strict-transport-security"),
       "max-age=31536000; includeSubDomains",

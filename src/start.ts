@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createStart, createCsrfMiddleware, createMiddleware } from "@tanstack/react-start";
 
 import { renderErrorPage } from "./lib/error-page";
@@ -51,8 +52,9 @@ const csrfMiddleware = createCsrfMiddleware({
 });
 
 const securityHeadersMiddleware = createMiddleware().server(async ({ request, next }) => {
-  const response = await next();
-  return applySecurityHeaders(request, response as unknown as Response);
+  const nonce = randomBytes(16).toString("base64");
+  const response = await next({ context: { cspNonce: nonce } });
+  return applySecurityHeaders(request, response as unknown as Response, nonce);
 });
 
 export const startInstance = createStart(() => ({

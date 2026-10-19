@@ -5,8 +5,8 @@ export const Route = createFileRoute("/api/auth/discord")({
     handlers: {
       GET: async ({ request }) => {
         console.log("[auth/discord] OAuth start requested");
-        const { redirectUri } = await import("@/lib/db/client.server");
-        const { createOAuthState } = await import("@/lib/session.server");
+        const { redirectUri } = await import("../../lib/db/client.server.ts");
+        const { createOAuthState } = await import("../../lib/session.server.ts");
         const token = new URL(request.url).searchParams.get("token") ?? "";
         const clientId = process.env["DISCORD_CLIENT_ID"];
         if (!clientId || !token) {
@@ -27,9 +27,9 @@ export const Route = createFileRoute("/api/auth/discord")({
         url.searchParams.set("state", state.nonce);
         url.searchParams.set("prompt", "none");
         console.log("[auth/discord] Redirecting to Discord OAuth");
-        const response = Response.redirect(url.toString(), 302);
-        response.headers.append("Set-Cookie", state.cookie);
-        return response;
+        const headers = new Headers({ Location: url.toString() });
+        headers.append("Set-Cookie", state.cookie);
+        return new Response(null, { status: 302, headers });
       },
     },
   },

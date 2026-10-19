@@ -107,3 +107,18 @@ Tests cover durable cross-token cooldown and lock behavior; latest-token-only mi
 8. After Preview validation, promote through the normal review and deployment process. Do not merge or push directly to `main` as part of this work.
 
 Part 1 is complete. Waiting for Part 2.
+
+## Follow-up hardening — OAuth, CSP, and Turnstile hostname
+
+### Unit-tested and build-verified
+
+- Replaced OAuth cookie mutations on immutable `Response.redirect()` headers with 302 responses built from mutable `Headers`. Route-level tests invoke both real GET handlers and verify redirect locations, secure state-cookie attributes, and state-cookie clearing on callback failure.
+- Added a per-request random CSP nonce in global request middleware and passed the same nonce through request context into `router.options.ssr.nonce`. Scripts are limited to `'self'`, that nonce, and Cloudflare Turnstile; Google Fonts CSS and font hosts are allowed, and `frame-src` contains only Cloudflare Turnstile.
+- Turnstile `siteverify` must return the expected hostname, configured by optional `PORTAL_HOSTNAME` or otherwise taken from the request host. Tests cover request-host acceptance and configured-host mismatch rejection.
+- Final validation: `npm test` **37 passed, 0 failed**; `npm run check` **passed** (ESLint and TypeScript); `npm run build` **passed** (client and SSR production bundles).
+
+### Browser verification — not verified
+
+Playwright 1.64.1 and Chromium 156.0.8078.4 were downloaded, but Chromium could not launch because the container lacks `libatk-1.0.so.0`. The container runs as UID 1000, so the missing system library could not be installed here. No browser hydration, CSP-violation, or Turnstile-widget-request result is claimed.
+
+The built production server was started locally using ephemeral test-only values. `GET /verify?demo=1` returned **HTTP 200** with the CSP and other security headers, but `Content-Length: 0`; therefore it provided no HTML to hydrate and no basis to assert a Turnstile request. Browser validation remains outstanding and this response warrants investigation before claiming the page works.

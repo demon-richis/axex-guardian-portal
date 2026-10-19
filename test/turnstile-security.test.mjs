@@ -7,6 +7,7 @@ const context = {
   discordId: "discord-user",
   guildId: "guild-id",
   challengeId: "a".repeat(48),
+  requestHostname: "portal.test",
   remoteIp: "198.51.100.14",
 };
 const environment = {
@@ -25,6 +26,7 @@ test("Turnstile siteverify requires a response bound to the verification context
       return Response.json({
         success: true,
         action: "axex_verify",
+        hostname: "portal.test",
         cdata: turnstileContext(
           context.token,
           context.discordId,
@@ -42,7 +44,33 @@ test("Turnstile siteverify requires a response bound to the verification context
 
 test("Turnstile rejects a provider response bound to another challenge context", async () => {
   const result = await verifyTurnstile("provider-token", context, environment, async () =>
-    Response.json({ success: true, action: "axex_verify", cdata: "wrong-context" }),
+    Response.json({
+      success: true,
+      action: "axex_verify",
+      hostname: "portal.test",
+      cdata: "wrong-context",
+    }),
+  );
+  assert.deepEqual(result, { ok: false, error: "turnstile_invalid" });
+});
+
+test("Turnstile rejects a response for a hostname other than PORTAL_HOSTNAME", async () => {
+  const result = await verifyTurnstile(
+    "provider-token",
+    context,
+    { ...environment, PORTAL_HOSTNAME: "expected.test" },
+    async () =>
+      Response.json({
+        success: true,
+        action: "axex_verify",
+        hostname: "portal.test",
+        cdata: turnstileContext(
+          context.token,
+          context.discordId,
+          context.guildId,
+          context.challengeId,
+        ),
+      }),
   );
   assert.deepEqual(result, { ok: false, error: "turnstile_invalid" });
 });

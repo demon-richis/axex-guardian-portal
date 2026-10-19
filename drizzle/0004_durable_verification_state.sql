@@ -15,27 +15,37 @@ INSERT INTO "verification_state" (
 SELECT
 	latest."guild_id",
 	latest."user_id",
-	COALESCE(maxed."attempts", 0),
-	maxed."cooldown_until",
-	CASE WHEN maxed."locked" THEN COALESCE(latest."created_at", now()) ELSE NULL END,
+	CASE
+		WHEN latest."status" IN ('completed', 'verified') THEN 0
+		ELSE COALESCE(latest."attempts", 0)
+	END,
+	CASE
+		WHEN latest."status" IN ('pending', 'failed')
+			AND latest."cooldown_until" > now()
+		THEN latest."cooldown_until"
+		ELSE NULL
+	END,
+	CASE
+		WHEN latest."status" = 'locked'
+		THEN COALESCE(latest."completed_at", latest."created_at", now())
+		ELSE NULL
+	END,
 	latest."reference_id",
 	now()
 FROM (
 	SELECT DISTINCT ON ("guild_id", "user_id")
-		"guild_id", "user_id", "reference_id", "created_at"
-	FROM "verify_tokens"
-	ORDER BY "guild_id", "user_id", "created_at" DESC NULLS LAST
-) latest
-JOIN (
-	SELECT
 		"guild_id",
 		"user_id",
-		max("attempts") AS "attempts",
-		max("cooldown_until") AS "cooldown_until",
-		bool_or("status" = 'locked' OR "attempts" >= 3) AS "locked"
+		"status",
+		"attempts",
+		"cooldown_until",
+		"completed_at",
+		"created_at",
+		"reference_id",
+		"token"
 	FROM "verify_tokens"
-	GROUP BY "guild_id", "user_id"
-) maxed USING ("guild_id", "user_id")
+	ORDER BY "guild_id", "user_id", "created_at" DESC NULLS LAST, "token" DESC
+) latest
 ON CONFLICT ("guild_id", "user_id") DO NOTHING;
 --> statement-breakpoint
 CREATE INDEX "verification_state_cooldown_idx" ON "verification_state" USING btree ("cooldown_until");

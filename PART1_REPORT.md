@@ -12,11 +12,30 @@ Added durable `verification_state`, keyed by `(guild_id, user_id)`, with attempt
 
 Challenge consumption advances attempts, cooldown, lock, and reference state atomically with the challenge claim and terminal callback enqueue. State resets only after successful verification or an authenticated bot release. The bot quarantine-release command calls the portal release endpoint.
 
+The follow-up hardening fixes the success path so a fail-fail-pass sequence commits attempts `0`, clears `cooldown_until`, and clears `locked_at` while retaining `last_reference_id`. The claim state update is now conditional on the same live token/challenge predicate as the token update, so an expired or concurrently consumed challenge cannot increment durable state without consuming the challenge. Migration `0004_durable_verification_state.sql` backfills only from each user's latest token: completed/verified latest rows reset state; locked latest rows create a lock; and pending/failed latest rows carry attempts with only still-future cooldowns. Bot quarantine releases also write an `audit_logs` row with event `STATE_RELEASED` and no secret-bearing metadata.
+
+To count rows that the corrected backfill would treat as locked on staging, run:
+
+```sql
+WITH latest AS (
+  SELECT DISTINCT ON (guild_id, user_id)
+    guild_id, user_id, status, attempts
+  FROM verify_tokens
+  ORDER BY guild_id, user_id, created_at DESC NULLS LAST, token DESC
+)
+SELECT count(*) AS rows_locked_by_backfill
+FROM latest
+WHERE status = 'locked'
+   OR (status NOT IN ('completed', 'verified') AND attempts >= 3);
+```
+
 Portal commits:
 
 - `32d8348` — `feat(portal): add durable verification state`
 - `015ac01` — `fix(portal): enforce verification state across tokens`
 - `2fb920b` — `docs: add Task 1 hardening report`
+- `741fdc9` — `fix(security): harden verification state transitions`
+- `72026b2` — `test(security): cover verification state edge cases`
 
 Bot commit in `demon-richis/axex`:
 
@@ -70,11 +89,11 @@ Task 3 commits:
 
 The current portal validation is green:
 
-- `npm test`: **31 passed, 0 failed**.
+- `npm test`: **34 passed, 0 failed**.
 - `npm run check`: **passed** — ESLint and TypeScript.
 - `npm run build`: **passed** — client and SSR production bundles.
 
-Tests cover durable cross-token cooldown and lock behavior; authenticated release reset; Turnstile context binding; missing and invalid Turnstile tokens; provider outage with no consumed attempt; client timing anti-spoofing; concurrent claims; OAuth state rejection; missing and mismatched session cookies; page and API security headers; API `no-store`; and production secret validation.
+Tests cover durable cross-token cooldown and lock behavior; latest-token-only migration backfill; fail-fail-pass reset and new-token issuance; expired-challenge claim races; authenticated release reset; Turnstile context binding; missing and invalid Turnstile tokens; provider outage with no consumed attempt; client timing anti-spoofing; concurrent claims; OAuth state rejection; missing and mismatched session cookies; page and API security headers; API `no-store`; and production secret validation.
 
 ## Manual production steps
 

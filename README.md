@@ -96,4 +96,4 @@ Rotate the bot/portal key by setting `BOT_TO_PORTAL_KEY` and `PORTAL_TO_BOT_KEY`
 
 The additive schema migrations can remain applied during an application rollback. Migration `0006` adds independent limiter/cache tables and outbox alert metadata; it may be reversed only after deploying code that no longer reads those additions. Migration `0007` corrects exhausted legacy attempts into locks and is intentionally forward-only; do not clear those locks as part of a code rollback—release users through the authenticated bot flow.
 
-See [DEPLOY.md](./DEPLOY.md) for portal deployment, migrations, key rotation, and rollback steps, and [TEST_CHECKLIST.md](./TEST_CHECKLIST.md) for the staging verification run.
+Apply migrations and validate the production environment in staging before rollout. Keep directional API keys synchronized with the bot and preserve durable verification locks during rollback.

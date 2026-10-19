@@ -33,7 +33,7 @@ The mounted workspace contains only the guardian portal repository. Portal work 
 
 1. Mount the bot repository to implement bot-side polling, directional receiver-key handling, guild logging/quarantine behavior, and validate the `honeypotTriggered` contract. The portal sends this field as a flag; its effect on bot behavior could not be confirmed here.
 2. Mount the account-intelligence repository to implement its service changes and cross-repository contract tests.
-3. Configure the production environment variables and trusted proxy mode, apply migrations `0006` and `0007`, and follow [DEPLOY.md](./DEPLOY.md) and [TEST_CHECKLIST.md](./TEST_CHECKLIST.md) in staging before rollout.
+3. Configure the production environment variables and trusted proxy mode, apply migrations `0006` and `0007`, and validate the deployment in staging before rollout.
 4. Confirm deployed Vercel request headers and `waitUntil` execution behavior in the actual project/runtime. Documentation was checked, but no live deployment was available.
 
-The pre-existing worktree change to `package-lock.json` and the supplied untracked `prompt.md` were preserved and excluded from the implementation commit.
+The pre-existing worktree change to `package-lock.json` was preserved and excluded from the implementation commit.

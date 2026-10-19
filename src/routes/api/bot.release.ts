@@ -17,8 +17,18 @@ export const Route = createFileRoute("/api/bot/release")({
         if (!parsed.success) return Response.json({ error: "Invalid request" }, { status: 400 });
         try {
           const { getDb } = await import("@/lib/db/client.server");
+          const { auditLogs } = await import("@/lib/db/schema");
           const { releaseVerificationState } = await import("@/lib/verification-state.server");
-          await releaseVerificationState(getDb(), parsed.data.guildId, parsed.data.userId);
+          const db = getDb();
+          await releaseVerificationState(db, parsed.data.guildId, parsed.data.userId);
+          await db.insert(auditLogs).values({
+            guildId: parsed.data.guildId,
+            userId: parsed.data.userId,
+            eventType: "STATE_RELEASED",
+            severity: "info",
+            flagged: false,
+            metadata: { source: "bot_release" },
+          });
           return Response.json({
             success: true,
             guildId: parsed.data.guildId,

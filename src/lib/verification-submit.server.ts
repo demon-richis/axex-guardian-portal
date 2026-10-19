@@ -192,6 +192,9 @@ export async function submitVerificationChallenge(
       : attempts === 2
         ? new Date(now.getTime() + 3 * 60 * 60 * 1000)
         : null;
+  const committedAttempts = finalPassed ? 0 : attempts;
+  const committedCooldownUntil = finalPassed ? null : cooldownUntil;
+  const committedLocked = finalPassed ? false : locked;
   const event = botDetected
     ? "BOT_DETECTED"
     : vpnDetected
@@ -221,10 +224,10 @@ export async function submitVerificationChallenge(
     responseTimeMs,
     flagged,
     flagReason: reason,
-    attempts,
-    cooldownUntil: cooldownUntil?.toISOString() ?? null,
+    attempts: committedAttempts,
+    cooldownUntil: committedCooldownUntil?.toISOString() ?? null,
     failureReason: !finalPassed ? reason : null,
-    locked,
+    locked: committedLocked,
   };
 
   const outboxCte = terminal
@@ -239,9 +242,9 @@ export async function submitVerificationChallenge(
   const claimResult = await db.execute(sql`
     WITH state_claim AS (
       UPDATE verification_state
-      SET attempts = ${attempts},
-          cooldown_until = ${cooldownUntil},
-          locked_at = ${locked ? now : null},
+      SET attempts = ${committedAttempts},
+          cooldown_until = ${committedCooldownUntil},
+          locked_at = ${committedLocked ? now : null},
           last_reference_id = ${row.referenceId},
           updated_at = ${now}
       WHERE guild_id = ${row.guildId}
@@ -249,6 +252,17 @@ export async function submitVerificationChallenge(
         AND attempts = ${state.attempts}
         AND locked_at IS NULL
         AND (cooldown_until IS NULL OR cooldown_until <= ${now})
+        AND EXISTS (
+          SELECT 1 FROM verify_tokens
+          WHERE token = ${input.token}
+            AND discord_id = ${row.discordId}
+            AND challenge_id = ${input.challengeId}
+            AND used = FALSE
+            AND challenge_consumed_at IS NULL
+            AND challenge_claim_id IS NULL
+            AND challenge_expires_at > ${now}
+            AND expires_at > ${now}
+        )
       RETURNING attempts
     ),
     claimed AS (
@@ -256,10 +270,10 @@ export async function submitVerificationChallenge(
       SET challenge_consumed_at = ${now},
           challenge_claim_id = ${claimId},
           challenge_submission_hash = ${submittedDigest},
-          attempts = ${attempts},
+          attempts = ${committedAttempts},
           used = ${terminal},
           status = ${callbackStatus},
-          cooldown_until = ${cooldownUntil},
+          cooldown_until = ${committedCooldownUntil},
           failure_reason = ${reason},
           response_time_ms = ${responseTimeMs},
           discord_tag = ${safeTag},
@@ -276,6 +290,7 @@ export async function submitVerificationChallenge(
         AND challenge_id = ${input.challengeId}
         AND used = FALSE
         AND challenge_consumed_at IS NULL
+        AND challenge_claim_id IS NULL
         AND challenge_expires_at > ${now}
         AND expires_at > ${now}
         AND EXISTS (SELECT 1 FROM state_claim)
@@ -357,7 +372,7 @@ export async function submitVerificationChallenge(
       flagged,
       flagReason: reason,
       metadata: {
-        attempts,
+        attempts: committedAttempts,
         passed: finalPassed,
         botDetected,
         honeypotTriggered,
@@ -377,9 +392,9 @@ export async function submitVerificationChallenge(
     passed: finalPassed,
     status: callbackStatus,
     referenceId: row.referenceId,
-    attempts,
-    cooldownUntil: cooldownUntil?.toISOString() ?? null,
+    attempts: committedAttempts,
+    cooldownUntil: committedCooldownUntil?.toISOString() ?? null,
     failureReason: reason,
-    locked,
+    locked: committedLocked,
   };
 }

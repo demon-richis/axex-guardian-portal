@@ -4,6 +4,8 @@ import { neon } from "@neondatabase/serverless";
 import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "./schema.ts";
 
+export { clientIp } from "../client-ip.server.ts";
+
 export function getDb() {
   const url = process.env["DATABASE_URL"];
   if (!url) throw new Error("DATABASE_URL is not configured");
@@ -12,15 +14,6 @@ export function getDb() {
 
 export function snowflakeToDate(id: string): Date {
   return new Date(Number(BigInt(id) >> 22n) + 1420070400000);
-}
-
-export function clientIp(request: Request): string {
-  return (
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    request.headers.get("x-real-ip") ??
-    ""
-  );
 }
 
 export async function checkIp(ip: string): Promise<{

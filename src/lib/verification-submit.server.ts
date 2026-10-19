@@ -81,7 +81,7 @@ export async function submitVerificationChallenge(
       attempts: state.attempts,
       cooldownUntil: state.cooldownUntil?.toISOString() ?? null,
       failureReason: row.failureReason,
-      locked: row.status === "locked",
+      locked: Boolean(state.lockedAt) || state.attempts >= 3,
       idempotent: true,
       ...(terminal && row.status === "bot_update_pending" ? { error: "bot_update_pending" } : {}),
     };
@@ -148,21 +148,21 @@ export async function submitVerificationChallenge(
     input.turnstileEnvironment ?? process.env,
     input.turnstileFetch,
   );
-  if (!turnstile.ok) {
+  if (!turnstile.ok && turnstile.error === "turnstile_unavailable") {
     return {
       success: false,
       error: turnstile.error,
-      httpStatus: turnstile.error === "turnstile_unavailable" ? 503 : 403,
+      httpStatus: 503,
     };
   }
-  const proofCorrect = true;
+  const proofCorrect = turnstile.ok;
   const attempts = state.attempts + 1;
   const accountAgeDays = ageInDays(row.discordId, now);
   const clickMs = input.clickMs ?? null;
   const honeypotTriggered = Boolean(input.honeypotTriggered || input.honeypot?.trim());
   const vpnDetected = input.isVpn || input.vpnDetected === true;
   const vpnType = input.vpnTypeDetected ?? input.vpnType ?? null;
-  const botDetected = honeypotTriggered;
+  const botDetected = false;
   const sameIpUsers = input.observedIp
     ? Number(
         (
@@ -176,7 +176,7 @@ export async function submitVerificationChallenge(
     ? "Hidden verification trap activated"
     : vpnDetected
       ? "VPN or proxy detected"
-      : accountAgeDays < 3
+      : accountAgeDays < 7
         ? "New Discord account"
         : attempts >= 2
           ? "Repeated verification attempt"
@@ -184,9 +184,9 @@ export async function submitVerificationChallenge(
             ? "Shared IP used by multiple users"
             : null;
   const flagged = Boolean(automaticReason);
-  const finalPassed = proofCorrect && !vpnDetected && !botDetected && accountAgeDays >= 3;
+  const finalPassed = proofCorrect && !vpnDetected;
   const locked = !finalPassed && (attempts >= 3 || vpnDetected);
-  const terminal = finalPassed || locked || vpnDetected || botDetected;
+  const terminal = finalPassed || locked || vpnDetected;
   const cooldownUntil = terminal
     ? null
     : attempts === 1
@@ -311,15 +311,16 @@ export async function submitVerificationChallenge(
       current.challengeConsumedAt &&
       current.challengeSubmissionHash === submittedDigest
     ) {
+      const currentState = await ensureVerificationState(db, row.guildId, row.userId, now);
       return {
         success: true,
         passed: Boolean(current.completedAt),
         status: current.status,
         referenceId: current.referenceId,
-        attempts: current.attempts,
-        cooldownUntil: current.cooldownUntil?.toISOString() ?? null,
+        attempts: currentState?.attempts ?? current.attempts,
+        cooldownUntil: currentState?.cooldownUntil?.toISOString() ?? null,
         failureReason: current.failureReason,
-        locked: current.status === "locked",
+        locked: Boolean(currentState?.lockedAt) || (currentState?.attempts ?? 0) >= 3,
         idempotent: true,
       };
     }

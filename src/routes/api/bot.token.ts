@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { and, eq, gt, inArray, lt } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { isReferenceIdCollision } from "../../lib/reference-id.server.ts";
 import type { auditLogs, verificationState, verifyTokens } from "../../lib/db/schema.ts";
@@ -45,12 +45,6 @@ function failedResponse(stage: string, error: unknown) {
   return Response.json({ error: "Internal server error" }, { status: 500 });
 }
 
-function retentionDaysFromEnvironment(value: string | undefined) {
-  const parsed = Number(value || 90);
-  if (!Number.isFinite(parsed)) return 90;
-  return Math.min(365, Math.max(7, parsed));
-}
-
 export async function handleBotTokenRequest(request: Request, dependencies: BotTokenDependencies) {
   console.log("[bot/token] Request received");
   let stage = "authentication";
@@ -68,16 +62,6 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
     stage = "database_initialization";
     const db = dependencies.getDb();
     const now = new Date();
-    const retentionDays = retentionDaysFromEnvironment(process.env["AXEX_RETENTION_DAYS"]);
-    const retentionCutoff = new Date(now.getTime() - retentionDays * 86_400_000);
-
-    stage = "retention_cleanup";
-    await db
-      .delete(dependencies.verifyTokens)
-      .where(lt(dependencies.verifyTokens.createdAt, retentionCutoff));
-    await db
-      .delete(dependencies.auditLogs)
-      .where(lt(dependencies.auditLogs.createdAt, retentionCutoff));
 
     const { token, userId, guildId, guildName, guildMemberCount, expiresAt } = parsed.data;
     stage = "verification_state_lookup";

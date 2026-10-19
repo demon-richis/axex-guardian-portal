@@ -25,6 +25,8 @@ const migrationFiles = [
   "0003_server_verified_challenge_outbox.sql",
   "0004_durable_verification_state.sql",
   "0005_turnstile_challenge_timing.sql",
+  "0006_shared_rate_limits_and_ip_cache.sql",
+  "0007_lock_legacy_exhausted_verification_state.sql",
 ];
 
 async function applyMigration(client, name) {
@@ -95,6 +97,7 @@ function submitInput(seed, challenge, answer, overrides = {}) {
     discordTag: "staging-user",
     clickMs: 8_000,
     observedIp: "198.51.100.14",
+    requestHostname: "portal.test",
     isVpn: false,
     vpnTypeDetected: null,
     now: new Date(),
@@ -163,6 +166,30 @@ test("durable-state migration backfills only from each user's latest token", asy
     assert.equal(pendingState.attempts, 2);
     assert.equal(pendingState.lockedAt, null);
     assert.equal(pendingState.cooldownUntil?.toISOString(), future.toISOString());
+  } finally {
+    await client.close();
+  }
+});
+
+test("migration hardens legacy rows with three attempts into durable locks", async () => {
+  const { client, db } = await freshDb({ through: migrationFiles.length - 1 });
+  try {
+    const seed = await seedToken(db, {
+      token: "legacy-three-failures",
+    });
+    await db.insert(schema.verificationState).values({
+      guildId: "test-guild",
+      userId: seed.userId,
+      attempts: 3,
+      cooldownUntil: new Date(Date.now() + 60_000),
+    });
+    await applyMigration(client, "0007_lock_legacy_exhausted_verification_state.sql");
+    const [state] = await db
+      .select()
+      .from(schema.verificationState)
+      .where(eq(schema.verificationState.userId, seed.userId));
+    assert.ok(state.lockedAt);
+    assert.equal(state.cooldownUntil, null);
   } finally {
     await client.close();
   }
@@ -306,26 +333,29 @@ test("OAuth identity must equal the bot-issued Discord user and cannot be reboun
   }
 });
 
-test("missing or invalid Turnstile cannot bypass verification or consume an attempt", async () => {
+test("invalid Turnstile proof consumes an attempt while remaining unable to pass", async () => {
   const { client, db } = await freshDb();
   try {
     const seed = await seedToken(db);
     const { challenge } = await challengeFor(db, seed.token);
-    const missing = await submitVerificationChallenge(db, {
-      ...submitInput(seed, challenge, "unused"),
-      turnstileToken: "",
-    });
     const invalid = await submitVerificationChallenge(db, {
       ...submitInput(seed, challenge, "unused"),
       turnstileToken: "forged-token",
+      turnstileEnvironment: {
+        NODE_ENV: "production",
+        TURNSTILE_SECRET_KEY: "test-secret",
+      },
+      turnstileFetch: async () => Response.json({ success: false }),
     });
     const row = (
       await db.select().from(schema.verifyTokens).where(eq(schema.verifyTokens.token, seed.token))
     )[0];
-    assert.deepEqual(missing, { success: false, error: "turnstile_invalid", httpStatus: 403 });
-    assert.deepEqual(invalid, { success: false, error: "turnstile_invalid", httpStatus: 403 });
-    assert.equal(row.attempts, 0);
-    assert.equal(row.challengeConsumedAt, null);
+    assert.equal(invalid.success, true, JSON.stringify(invalid));
+    assert.equal(invalid.passed, false);
+    assert.equal(invalid.attempts, 1);
+    assert.ok(invalid.cooldownUntil);
+    assert.equal(row.attempts, 1);
+    assert.ok(row.challengeConsumedAt);
   } finally {
     await client.close();
   }
@@ -379,7 +409,7 @@ test("client clickMs cannot make a valid Turnstile proof fail or pass", async ()
   }
 });
 
-test("Turnstile-passed but policy-failed attempts escalate and the third locks the session", async () => {
+test("invalid Turnstile attempts escalate across challenges and the third locks the user", async () => {
   const { client, db } = await freshDb();
   try {
     let now = new Date();
@@ -389,14 +419,32 @@ test("Turnstile-passed but policy-failed attempts escalate and the third locks t
       discordId: snowflakeFrom(new Date(now.getTime() - 86_400_000)),
     });
     let result;
+    let lastChallenge;
     for (let index = 0; index < 3; index += 1) {
       const { challenge } = await challengeFor(db, seed.token, now);
-      result = await submitVerificationChallenge(
-        db,
-        submitInput(seed, challenge, "unused", { now }),
-      );
+      lastChallenge = challenge;
+      const submission = submitInput(seed, challenge, "unused", {
+        now,
+        turnstileToken: `invalid-${index}`,
+        turnstileEnvironment: {
+          NODE_ENV: "production",
+          TURNSTILE_SECRET_KEY: "test-secret",
+        },
+        turnstileFetch: async () => Response.json({ success: false }),
+      });
+      const outcomes =
+        index === 2
+          ? await Promise.all([
+              submitVerificationChallenge(db, submission),
+              submitVerificationChallenge(db, submission),
+            ])
+          : [await submitVerificationChallenge(db, submission)];
+      result = outcomes[0];
       assert.equal(result.passed, false);
       assert.equal(result.attempts, index + 1);
+      if (index === 2) {
+        assert.ok(outcomes.every((outcome) => outcome.locked && outcome.attempts === 3));
+      }
       if (index < 2) {
         assert.ok(result.cooldownUntil, "each non-terminal wrong attempt must set a cooldown");
         const expectedMinimum = index === 0 ? 3 * 60_000 : 3 * 60 * 60_000;
@@ -413,6 +461,48 @@ test("Turnstile-passed but policy-failed attempts escalate and the third locks t
     assert.equal(row.attempts, 3);
     assert.equal(outbox.length, 1);
     assert.equal(outbox[0].payload.passed, false);
+    const duplicate = await submitVerificationChallenge(
+      db,
+      submitInput(seed, lastChallenge, "unused", {
+        turnstileToken: "invalid-2",
+        turnstileEnvironment: {
+          NODE_ENV: "production",
+          TURNSTILE_SECRET_KEY: "test-secret",
+        },
+        turnstileFetch: async () => Response.json({ success: false }),
+      }),
+    );
+    assert.equal(duplicate.locked, true);
+  } finally {
+    await client.close();
+  }
+});
+
+test("accounts younger than seven days are flagged without failing or burning attempts", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const now = new Date();
+    const seed = await seedToken(db, {
+      now,
+      discordId: snowflakeFrom(new Date(now.getTime() - 6 * 86_400_000)),
+    });
+    const { challenge } = await challengeFor(db, seed.token, now);
+    const result = await submitVerificationChallenge(
+      db,
+      submitInput(seed, challenge, "unused", { now, honeypotTriggered: true }),
+    );
+    const [audit] = await db.select().from(schema.auditLogs);
+    const [outbox] = await db.select().from(schema.botCallbackOutbox);
+
+    assert.equal(result.passed, true);
+    assert.equal(result.attempts, 0);
+    assert.equal(result.locked, false);
+    assert.equal(audit.flagged, true);
+    assert.equal(audit.accountAgeDays, 6);
+    assert.equal(outbox.payload.passed, true);
+    assert.equal(outbox.payload.attempts, 0);
+    assert.equal(outbox.payload.botDetected, false);
+    assert.equal(outbox.payload.honeypotTriggered, true);
   } finally {
     await client.close();
   }
@@ -551,6 +641,70 @@ test("outbox retries the identical payload/reference after uncertain delivery an
   }
 });
 
+test("immediate and polling outbox workers racing send one bot callback", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const seed = await seedToken(db);
+    const { challenge } = await challengeFor(db, seed.token);
+    await submitVerificationChallenge(db, submitInput(seed, challenge, "unused"));
+
+    let callbacks = 0;
+    const fetcher = async () => {
+      callbacks += 1;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return new Response(null, { status: 204 });
+    };
+    const config = {
+      webhookUrl: "https://bot.test/callback",
+      apiKey: "shared-test-key",
+    };
+    const results = await Promise.all([
+      processBotCallbackOutboxWith(db, config, fetcher, 1, seed.referenceId),
+      processBotCallbackOutboxWith(db, config, fetcher, 1, seed.referenceId),
+      processBotCallbackOutboxWith(db, config, fetcher, 1, seed.referenceId),
+    ]);
+    assert.equal(callbacks, 1);
+    assert.equal(
+      results.reduce((total, result) => total + result.delivered, 0),
+      1,
+    );
+    assert.equal((await db.select().from(schema.botCallbackOutbox))[0].status, "delivered");
+  } finally {
+    await client.close();
+  }
+});
+
+test("stuck outbox rows create one audit alert and are not repeatedly announced", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const seed = await seedToken(db);
+    const old = new Date(Date.now() - 6 * 60_000);
+    await db.insert(schema.botCallbackOutbox).values({
+      referenceId: seed.referenceId,
+      token: seed.token,
+      payload: { guildId: "test-guild", referenceId: seed.referenceId },
+      status: "pending",
+      nextAttemptAt: old,
+      createdAt: old,
+      updatedAt: old,
+    });
+    const config = { webhookUrl: null, apiKey: null };
+    await processBotCallbackOutboxWith(db, config, async () => new Response(null), 1);
+    await processBotCallbackOutboxWith(db, config, async () => new Response(null), 1);
+
+    const alerts = await db
+      .select()
+      .from(schema.auditLogs)
+      .where(eq(schema.auditLogs.eventType, "OUTBOX_STUCK"));
+    const [outbox] = await db.select().from(schema.botCallbackOutbox);
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0].metadata.referenceId, seed.referenceId);
+    assert.ok(outbox.stuckAlertedAt);
+  } finally {
+    await client.close();
+  }
+});
+
 test("reference collision preflight aborts migration without changing existing active reference IDs", async () => {
   const { client, db } = await freshDb({ through: 3 });
   try {
@@ -621,7 +775,15 @@ test("fail-fail-pass resets durable state and permits a new token", async () => 
     const firstChallenge = await challengeFor(db, first.token, start);
     const failedOnce = await submitVerificationChallenge(
       db,
-      submitInput(first, firstChallenge.challenge, "unused", { now: start }),
+      submitInput(first, firstChallenge.challenge, "unused", {
+        now: start,
+        turnstileToken: "invalid-first",
+        turnstileEnvironment: {
+          NODE_ENV: "production",
+          TURNSTILE_SECRET_KEY: "test-secret",
+        },
+        turnstileFetch: async () => Response.json({ success: false }),
+      }),
     );
     assert.equal(failedOnce.attempts, 1);
 
@@ -636,7 +798,15 @@ test("fail-fail-pass resets durable state and permits a new token", async () => 
     const secondChallenge = await challengeFor(db, second.token, secondTime);
     const failedTwice = await submitVerificationChallenge(
       db,
-      submitInput(second, secondChallenge.challenge, "unused", { now: secondTime }),
+      submitInput(second, secondChallenge.challenge, "unused", {
+        now: secondTime,
+        turnstileToken: "invalid-second",
+        turnstileEnvironment: {
+          NODE_ENV: "production",
+          TURNSTILE_SECRET_KEY: "test-secret",
+        },
+        turnstileFetch: async () => Response.json({ success: false }),
+      }),
     );
     assert.equal(failedTwice.attempts, 2);
 
@@ -736,7 +906,15 @@ test("durable verification state survives token expiry, locks across new tokens,
     const firstChallenge = await challengeFor(db, first.token, start);
     const failedOnce = await submitVerificationChallenge(
       db,
-      submitInput(first, firstChallenge.challenge, "unused", { now: start }),
+      submitInput(first, firstChallenge.challenge, "unused", {
+        now: start,
+        turnstileToken: "invalid-first",
+        turnstileEnvironment: {
+          NODE_ENV: "production",
+          TURNSTILE_SECRET_KEY: "test-secret",
+        },
+        turnstileFetch: async () => Response.json({ success: false }),
+      }),
     );
     assert.equal(failedOnce.attempts, 1);
 
@@ -761,7 +939,15 @@ test("durable verification state survives token expiry, locks across new tokens,
     const secondChallenge = await challengeFor(db, second.token, afterFirstCooldown);
     const failedTwice = await submitVerificationChallenge(
       db,
-      submitInput(second, secondChallenge.challenge, "unused", { now: afterFirstCooldown }),
+      submitInput(second, secondChallenge.challenge, "unused", {
+        now: afterFirstCooldown,
+        turnstileToken: "invalid-second",
+        turnstileEnvironment: {
+          NODE_ENV: "production",
+          TURNSTILE_SECRET_KEY: "test-secret",
+        },
+        turnstileFetch: async () => Response.json({ success: false }),
+      }),
     );
     assert.equal(failedTwice.attempts, 2);
 
@@ -786,7 +972,15 @@ test("durable verification state survives token expiry, locks across new tokens,
     const thirdChallenge = await challengeFor(db, third.token, afterSecondCooldown);
     const locked = await submitVerificationChallenge(
       db,
-      submitInput(third, thirdChallenge.challenge, "unused", { now: afterSecondCooldown }),
+      submitInput(third, thirdChallenge.challenge, "unused", {
+        now: afterSecondCooldown,
+        turnstileToken: "invalid-third",
+        turnstileEnvironment: {
+          NODE_ENV: "production",
+          TURNSTILE_SECRET_KEY: "test-secret",
+        },
+        turnstileFetch: async () => Response.json({ success: false }),
+      }),
     );
     assert.equal(locked.attempts, 3);
     assert.equal(locked.locked, true);

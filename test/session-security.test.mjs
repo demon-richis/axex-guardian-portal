@@ -106,6 +106,7 @@ test("security headers cover pages and API responses", () => {
   for (const response of [page, api]) {
     const csp = response.headers.get("content-security-policy") ?? "";
     assert.match(csp, /frame-ancestors 'none'/);
+    assert.match(csp, /form-action 'self'/);
     assert.match(csp, /script-src 'self' 'nonce-test-nonce' https:\/\/challenges\.cloudflare\.com/);
     assert.match(csp, /style-src 'self' 'unsafe-inline' https:\/\/fonts\.googleapis\.com/);
     assert.match(csp, /font-src 'self' https:\/\/fonts\.gstatic\.com/);
@@ -113,7 +114,7 @@ test("security headers cover pages and API responses", () => {
     assert.doesNotMatch(csp, /script-src[^;]*unsafe-inline|frame-src[^;]*'none'/);
     assert.equal(
       response.headers.get("strict-transport-security"),
-      "max-age=31536000; includeSubDomains",
+      "max-age=31536000; includeSubDomains; preload",
     );
     assert.equal(response.headers.get("x-content-type-options"), "nosniff");
     assert.equal(response.headers.get("referrer-policy"), "no-referrer");
@@ -136,11 +137,48 @@ test("production startup validation requires a sufficiently strong session secre
         SESSION_SECRET: "a".repeat(32),
         TURNSTILE_SITE_KEY: "site-key",
         TURNSTILE_SECRET_KEY: "secret-key",
+        DATABASE_URL: "postgresql://portal.test/db",
+        BOT_TO_PORTAL_KEY: "b".repeat(32),
+        PORTAL_TO_BOT_KEY: "p".repeat(32),
+        BOT_WEBHOOK_URL: "https://bot.test/callback",
+        DISCORD_CLIENT_ID: "client-id",
+        DISCORD_CLIENT_SECRET: "client-secret",
+        DISCORD_REDIRECT_URI: "https://portal.test/api/auth/callback",
+        CRON_SECRET: "c".repeat(32),
+        TRUSTED_PROXY_MODE: "vercel",
+        RATE_LIMIT_BACKEND: "neon",
+        INTELLIGENCE_URL: "https://intelligence.test",
+        INTELLIGENCE_API_KEY: "intelligence-key",
       },
       true,
     ),
   );
   assert.doesNotThrow(() => validateRuntimeEnvironment({ NODE_ENV: "development" }, false));
+  assert.throws(
+    () =>
+      validateRuntimeEnvironment(
+        {
+          NODE_ENV: "production",
+          SESSION_SECRET: "a".repeat(32),
+          TURNSTILE_SITE_KEY: "site-key",
+          TURNSTILE_SECRET_KEY: "secret-key",
+          DATABASE_URL: "postgresql://portal.test/db",
+          BOT_TO_PORTAL_KEY: "b".repeat(32),
+          PORTAL_TO_BOT_KEY: "p".repeat(32),
+          BOT_WEBHOOK_URL: "https://bot.test/callback",
+          DISCORD_CLIENT_ID: "client-id",
+          DISCORD_CLIENT_SECRET: "client-secret",
+          DISCORD_REDIRECT_URI: "https://portal.test/api/auth/callback",
+          CRON_SECRET: "c".repeat(32),
+          TRUSTED_PROXY_MODE: "vercel",
+          INTELLIGENCE_URL: "https://intelligence.test",
+          INTELLIGENCE_API_KEY: "intelligence-key",
+          RATE_LIMIT_BACKEND: "memory",
+        },
+        true,
+      ),
+    /RATE_LIMIT_BACKEND/,
+  );
 });
 
 test.after(() => {

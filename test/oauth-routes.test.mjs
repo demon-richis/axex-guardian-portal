@@ -8,11 +8,19 @@ const originalEnvironment = {
   SESSION_SECRET: process.env.SESSION_SECRET,
   DISCORD_CLIENT_ID: process.env.DISCORD_CLIENT_ID,
   DISCORD_CLIENT_SECRET: process.env.DISCORD_CLIENT_SECRET,
+  NODE_ENV: process.env.NODE_ENV,
+  RATE_LIMIT_BACKEND: process.env.RATE_LIMIT_BACKEND,
+  NODE_ENV: process.env.NODE_ENV,
+  RATE_LIMIT_BACKEND: process.env.RATE_LIMIT_BACKEND,
 };
 const originalFetch = globalThis.fetch;
 process.env.SESSION_SECRET = "oauth-route-unit-test-secret-at-least-32-bytes";
 process.env.DISCORD_CLIENT_ID = "discord-client-id";
 process.env.DISCORD_CLIENT_SECRET = "discord-client-secret";
+process.env.NODE_ENV = "test";
+process.env.RATE_LIMIT_BACKEND = "memory";
+process.env.NODE_ENV = "test";
+process.env.RATE_LIMIT_BACKEND = "memory";
 
 const discordGet = discordRoute.options.server.handlers.GET;
 const callbackGet = callbackRoute.options.server.handlers.GET;

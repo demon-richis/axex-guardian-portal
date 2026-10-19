@@ -102,6 +102,72 @@ function submitInput(seed, challenge, answer, overrides = {}) {
   };
 }
 
+test("durable-state migration backfills only from each user's latest token", async () => {
+  const client = new PGlite();
+  try {
+    for (const migration of migrationFiles.slice(0, 4)) await applyMigration(client, migration);
+    await applyMigration(client, "0005_turnstile_challenge_timing.sql");
+    const db = drizzle(client, { schema });
+    const base = new Date(Date.now() - 2_000);
+    const future = new Date(Date.now() + 86_400_000);
+    await db.insert(schema.verifyTokens).values([
+      {
+        token: "backfill-completed-old",
+        userId: "backfill-completed-user",
+        guildId: "backfill-guild",
+        guildName: "Backfill Guild",
+        expiresAt: future,
+        status: "locked",
+        attempts: 3,
+        createdAt: base,
+      },
+      {
+        token: "backfill-completed-latest",
+        userId: "backfill-completed-user",
+        guildId: "backfill-guild",
+        guildName: "Backfill Guild",
+        expiresAt: future,
+        status: "completed",
+        attempts: 0,
+        createdAt: new Date(base.getTime() + 1_000),
+      },
+      {
+        token: "backfill-pending-old",
+        userId: "backfill-pending-user",
+        guildId: "backfill-guild",
+        guildName: "Backfill Guild",
+        expiresAt: future,
+        status: "completed",
+        attempts: 0,
+        createdAt: base,
+      },
+      {
+        token: "backfill-pending-latest",
+        userId: "backfill-pending-user",
+        guildId: "backfill-guild",
+        guildName: "Backfill Guild",
+        expiresAt: future,
+        status: "pending",
+        attempts: 2,
+        cooldownUntil: future,
+        createdAt: new Date(base.getTime() + 1_000),
+      },
+    ]);
+    await applyMigration(client, "0004_durable_verification_state.sql");
+    const states = await db.select().from(schema.verificationState);
+    const completedState = states.find((state) => state.userId === "backfill-completed-user");
+    const pendingState = states.find((state) => state.userId === "backfill-pending-user");
+    assert.equal(completedState.attempts, 0);
+    assert.equal(completedState.lockedAt, null);
+    assert.equal(completedState.cooldownUntil, null);
+    assert.equal(pendingState.attempts, 2);
+    assert.equal(pendingState.lockedAt, null);
+    assert.equal(pendingState.cooldownUntil?.toISOString(), future.toISOString());
+  } finally {
+    await client.close();
+  }
+});
+
 test("challenge is random, server-bound, and duplicate issuance returns the same Turnstile context", async () => {
   const { client, db } = await freshDb();
   try {
@@ -306,7 +372,7 @@ test("client clickMs cannot make a valid Turnstile proof fail or pass", async ()
       await db.select().from(schema.verifyTokens).where(eq(schema.verifyTokens.token, seed.token))
     )[0];
     assert.equal(result.passed, true);
-    assert.equal(result.attempts, 1);
+    assert.equal(result.attempts, 0);
     assert.equal(row.responseTimeMs, 0);
   } finally {
     await client.close();
@@ -378,7 +444,7 @@ test("correct challenge proof is identity-bound and atomically creates one final
     const queued = await db.select().from(schema.botCallbackOutbox);
     assert.equal(accepted.passed, true);
     assert.equal(accepted.status, "bot_update_pending");
-    assert.equal(accepted.attempts, 1);
+    assert.equal(accepted.attempts, 0);
     assert.equal(duplicate.idempotent, true);
     assert.equal(row.used, true);
     assert.equal(queued.length, 1);
@@ -429,7 +495,7 @@ test("concurrent duplicate correct submissions produce one attempt and one durab
     )[0];
     const outbox = await db.select().from(schema.botCallbackOutbox);
     assert.ok(first.success && second.success);
-    assert.equal(row.attempts, 1);
+    assert.equal(row.attempts, 0);
     assert.equal(outbox.length, 1);
     assert.ok(first.idempotent || second.idempotent);
   } finally {
@@ -536,6 +602,122 @@ test("new reference IDs remain bot-compatible and the database rejects duplicate
     await assert.rejects(() =>
       seedToken(db, { token: "other-token", referenceId: seed.referenceId }),
     );
+  } finally {
+    await client.close();
+  }
+});
+
+test("fail-fail-pass resets durable state and permits a new token", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const start = new Date("2026-01-01T00:00:00.000Z");
+    const youngDiscordId = snowflakeFrom(start);
+    const first = await seedToken(db, {
+      token: "reset-state-1",
+      now: start,
+      expiresInMs: 8 * 60 * 60 * 1000,
+      discordId: youngDiscordId,
+    });
+    const firstChallenge = await challengeFor(db, first.token, start);
+    const failedOnce = await submitVerificationChallenge(
+      db,
+      submitInput(first, firstChallenge.challenge, "unused", { now: start }),
+    );
+    assert.equal(failedOnce.attempts, 1);
+
+    const secondTime = new Date(start.getTime() + 3 * 60 * 1000 + 1);
+    const second = await seedToken(db, {
+      token: "reset-state-2",
+      userId: first.userId,
+      discordId: youngDiscordId,
+      now: secondTime,
+      expiresInMs: 8 * 60 * 60 * 1000,
+    });
+    const secondChallenge = await challengeFor(db, second.token, secondTime);
+    const failedTwice = await submitVerificationChallenge(
+      db,
+      submitInput(second, secondChallenge.challenge, "unused", { now: secondTime }),
+    );
+    assert.equal(failedTwice.attempts, 2);
+
+    const passTime = new Date(secondTime.getTime() + 3 * 86_400_000 + 1);
+    const third = await seedToken(db, {
+      token: "reset-state-3",
+      userId: first.userId,
+      discordId: youngDiscordId,
+      now: passTime,
+      expiresInMs: 8 * 60 * 60 * 1000,
+    });
+    const thirdChallenge = await challengeFor(db, third.token, passTime);
+    const passed = await submitVerificationChallenge(
+      db,
+      submitInput(third, thirdChallenge.challenge, "unused", { now: passTime }),
+    );
+    assert.equal(passed.passed, true);
+    assert.equal(passed.attempts, 0);
+    assert.equal(passed.cooldownUntil, null);
+    assert.equal(passed.locked, false);
+
+    const state = (
+      await db
+        .select()
+        .from(schema.verificationState)
+        .where(eq(schema.verificationState.userId, first.userId))
+    )[0];
+    assert.equal(state.attempts, 0);
+    assert.equal(state.cooldownUntil, null);
+    assert.equal(state.lockedAt, null);
+
+    const fourth = await seedToken(db, {
+      token: "reset-state-4",
+      userId: first.userId,
+      discordId: youngDiscordId,
+      now: passTime,
+    });
+    const newChallenge = await issueVerificationChallenge(db, fourth.token, passTime);
+    assert.equal(newChallenge.success, true);
+  } finally {
+    await client.close();
+  }
+});
+
+test("expired challenge race does not increment durable state when the token claim updates zero rows", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const seed = await seedToken(db);
+    const issued = await challengeFor(db, seed.token);
+    let executeCount = 0;
+    const racedDb = new Proxy(db, {
+      get(target, property) {
+        if (property === "execute") {
+          return async (query) => {
+            executeCount += 1;
+            if (executeCount === 2) {
+              await db
+                .update(schema.verifyTokens)
+                .set({ challengeExpiresAt: new Date(issued.row.challengeIssuedAt.getTime() - 1) })
+                .where(eq(schema.verifyTokens.token, seed.token));
+            }
+            return target.execute(query);
+          };
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const result = await submitVerificationChallenge(
+      racedDb,
+      submitInput(seed, issued.challenge, "unused"),
+    );
+    const state = (
+      await db
+        .select()
+        .from(schema.verificationState)
+        .where(eq(schema.verificationState.userId, seed.userId))
+    )[0];
+    assert.equal(result.error, "challenge_already_consumed");
+    assert.equal(state.attempts, 0);
+    assert.equal(state.cooldownUntil, null);
   } finally {
     await client.close();
   }

@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { consumeConfiguredRateLimit } from "../../lib/rate-limit.server.ts";
 
 export const Route = createFileRoute("/api/auth/callback")({
   server: {
@@ -6,10 +7,28 @@ export const Route = createFileRoute("/api/auth/callback")({
       GET: async ({ request }) => {
         console.log("[auth/callback] OAuth callback received");
         const { getDb, redirectUri } = await import("../../lib/db/client.server.ts");
+        const { clientIp } = await import("../../lib/client-ip.server.ts");
         const { bindOAuthIdentity } = await import("../../lib/discord-identity.server.ts");
         const { consumeOAuthState, createSessionCookie } =
           await import("../../lib/session.server.ts");
         const url = new URL(request.url);
+        try {
+          const ip = clientIp(request) || "unknown";
+          const db = process.env["RATE_LIMIT_BACKEND"] === "memory" ? null : getDb();
+          const limit = await consumeConfiguredRateLimit(db, `auth-callback:ip:${ip}`, 20, 60_000);
+          if (!limit.allowed) {
+            return Response.json(
+              { error: "rate_limited" },
+              { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } },
+            );
+          }
+        } catch (error) {
+          console.error(
+            "[auth/callback] Rate limit unavailable:",
+            error instanceof Error ? error.name : "unknown",
+          );
+          return Response.json({ error: "temporarily_unavailable" }, { status: 503 });
+        }
         const code = url.searchParams.get("code");
         const stateNonce = url.searchParams.get("state") ?? "";
         const state = stateNonce ? consumeOAuthState(request, stateNonce) : null;

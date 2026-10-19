@@ -4,6 +4,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  primaryKey,
   serial,
   text,
   timestamp,
@@ -100,6 +101,7 @@ export const botCallbackOutbox = pgTable(
     nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).defaultNow().notNull(),
     claimId: text("claim_id"),
     leaseUntil: timestamp("lease_until", { withTimezone: true }),
+    stuckAlertedAt: timestamp("stuck_alerted_at", { withTimezone: true }),
     lastError: text("last_error"),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
@@ -108,7 +110,34 @@ export const botCallbackOutbox = pgTable(
   (table) => [
     uniqueIndex("bot_callback_outbox_reference_id_unique_idx").on(table.referenceId),
     index("bot_callback_outbox_due_idx").on(table.status, table.nextAttemptAt),
+    index("bot_callback_outbox_stuck_idx").on(table.status, table.createdAt),
   ],
+);
+
+export const rateLimitBuckets = pgTable(
+  "rate_limit_buckets",
+  {
+    bucketHash: text("bucket_hash").notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    count: integer("count").default(1).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.bucketHash, table.windowStart] }),
+    index("rate_limit_buckets_expires_idx").on(table.expiresAt),
+  ],
+);
+
+export const ipCheckCache = pgTable(
+  "ip_check_cache",
+  {
+    ipHash: text("ip_hash").primaryKey(),
+    status: text("status").$type<"clear" | "blocked">().notNull(),
+    isVpn: boolean("is_vpn").notNull(),
+    type: text("type"),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+  },
+  (table) => [index("ip_check_cache_expires_idx").on(table.expiresAt)],
 );
 
 export const auditLogs = pgTable(

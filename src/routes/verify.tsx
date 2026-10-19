@@ -54,7 +54,15 @@ type TokenInfo = {
   botError?: string | null;
 };
 type ErrorKind =
-  "invalid" | "used" | "timeout" | "lockout" | "auth" | "network" | "bot" | "generic";
+  | "invalid"
+  | "used"
+  | "timeout"
+  | "lockout"
+  | "auth"
+  | "network"
+  | "captchaUnavailable"
+  | "bot"
+  | "generic";
 type Phase = "loading" | "auth" | "vpn" | "captcha" | "cooldown" | "pending" | "done" | "error";
 
 const ERRORS: Record<ErrorKind, [string, string]> = {
@@ -69,6 +77,10 @@ const ERRORS: Record<ErrorKind, [string, string]> = {
   network: [
     "Security check unavailable",
     "We could not complete the network check. Try again in a moment; verification will not continue until it succeeds.",
+  ],
+  captchaUnavailable: [
+    "Verification service unavailable",
+    "The secure challenge provider is temporarily unavailable. No attempt was used; please try again shortly.",
   ],
   bot: [
     "Discord update is taking longer than usual",
@@ -221,7 +233,7 @@ function VerifyPage() {
       console.log("[verify] Step 2: Starting IP check");
       setBusy(true);
       try {
-        const response = await fetch("/api/check-ip", {
+        const response = await fetch(`/api/check-ip?token=${encodeURIComponent(token)}`, {
           cache: "no-store",
           ...(signal ? { signal } : {}),
         });
@@ -492,6 +504,8 @@ function VerifyPage() {
           setPhase("cooldown");
         } else if (result?.locked || serverAttempts >= 3) {
           fail("lockout");
+        } else if (result?.error === "turnstile_unavailable") {
+          fail("captchaUnavailable");
         } else {
           fail(result?.error === "network_check_unavailable" ? "network" : "generic");
         }

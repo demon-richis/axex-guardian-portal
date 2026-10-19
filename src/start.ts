@@ -14,6 +14,8 @@ if (process.env["BOT_WEBHOOK_URL"]) {
 
 for (const name of [
   "DATABASE_URL",
+  "BOT_TO_PORTAL_KEY",
+  "PORTAL_TO_BOT_KEY",
   "AXEX_BOT_API_KEY",
   "BOT_WEBHOOK_URL",
   "DISCORD_CLIENT_ID",
@@ -24,8 +26,14 @@ for (const name of [
   "PROXYCHECK_API_KEY",
   "INTELLIGENCE_URL",
   "INTELLIGENCE_API_KEY",
+  "CRON_SECRET",
+  "TRUSTED_PROXY_MODE",
 ]) {
-  if (!process.env[name])
+  const legacyApiKeyConfigured =
+    name === "BOT_TO_PORTAL_KEY" || name === "PORTAL_TO_BOT_KEY"
+      ? Boolean(process.env["AXEX_BOT_API_KEY"])
+      : false;
+  if (!process.env[name] && !legacyApiKeyConfigured)
     console.warn(`[portal] ${name} is not configured; related functionality may be unavailable`);
 }
 

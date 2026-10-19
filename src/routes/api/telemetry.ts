@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 const Body = z.object({
@@ -40,13 +41,28 @@ export const Route = createFileRoute("/api/telemetry")({
   server: {
     handlers: {
       POST: async ({ request }) => {
-        const parsed = Body.safeParse(await request.json().catch(() => null));
-        if (!parsed.success) return Response.json({ success: false }, { status: 400 });
-        const { isSameOrigin, rateLimit, requestAddress } = await import("@/lib/rate-limit.server");
+        const { isSameOrigin, consumeConfiguredRateLimit } =
+          await import("@/lib/rate-limit.server");
         if (!isSameOrigin(request)) {
           return Response.json({ success: false, error: "cross_origin_request" }, { status: 403 });
         }
-        const requestLimit = rateLimit(`telemetry:${requestAddress(request)}`, 60, 60_000);
+        const [{ getDb, clientIp }, { auditLogs, verifyTokens }] = await Promise.all([
+          import("@/lib/db/client.server"),
+          import("@/lib/db/schema"),
+        ]);
+        let db;
+        let requestLimit;
+        try {
+          db = getDb();
+          const ip = clientIp(request) || "unknown";
+          requestLimit = await consumeConfiguredRateLimit(db, `telemetry:ip:${ip}`, 60, 60_000);
+        } catch (error) {
+          console.error(
+            "[telemetry] Rate limit unavailable:",
+            error instanceof Error ? error.name : "unknown",
+          );
+          return Response.json({ success: false }, { status: 503 });
+        }
         if (!requestLimit.allowed) {
           return Response.json(
             {
@@ -57,13 +73,34 @@ export const Route = createFileRoute("/api/telemetry")({
             { status: 429, headers: { "Retry-After": String(requestLimit.retryAfterSeconds) } },
           );
         }
+        const parsed = Body.safeParse(await request.json().catch(() => null));
+        if (!parsed.success) return Response.json({ success: false }, { status: 400 });
+        const tokenHash = createHash("sha256").update(parsed.data.token).digest("hex");
         try {
-          const { getDb } = await import("@/lib/db/client.server");
-          const { auditLogs, verifyTokens } = await import("@/lib/db/schema");
+          const tokenLimit = await consumeConfiguredRateLimit(
+            db,
+            `telemetry:token:${tokenHash}`,
+            40,
+            60 * 60_000,
+          );
+          if (!tokenLimit.allowed) {
+            return Response.json(
+              { success: false, error: "rate_limited" },
+              { status: 429, headers: { "Retry-After": String(tokenLimit.retryAfterSeconds) } },
+            );
+          }
+        } catch (error) {
+          console.error(
+            "[telemetry] Token limit unavailable:",
+            error instanceof Error ? error.name : "unknown",
+          );
+          return Response.json({ success: false }, { status: 503 });
+        }
+        try {
           const { analyzePortalUser, notifyBotIntelligence, recordPortalEvent } =
             await import("@/lib/intelligence.server");
           const row = (
-            await getDb()
+            await db
               .select({
                 userId: verifyTokens.userId,
                 guildId: verifyTokens.guildId,
@@ -77,14 +114,12 @@ export const Route = createFileRoute("/api/telemetry")({
               .limit(1)
           )[0];
           if (!row) return Response.json({ success: false }, { status: 404 });
-          await getDb()
-            .insert(auditLogs)
-            .values({
-              guildId: row.guildId,
-              eventType: `UX_${parsed.data.event.toUpperCase()}`,
-              severity: "info",
-              metadata: { device: parsed.data.device ?? "unknown", referenceId: row.referenceId },
-            });
+          await db.insert(auditLogs).values({
+            guildId: row.guildId,
+            eventType: `UX_${parsed.data.event.toUpperCase()}`,
+            severity: "info",
+            metadata: { device: parsed.data.device ?? "unknown", referenceId: row.referenceId },
+          });
 
           const eventType = intelligenceEvents[parsed.data.event];
           const userId = row.discordId ?? row.userId;

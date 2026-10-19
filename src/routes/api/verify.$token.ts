@@ -1,15 +1,51 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { and, eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
 
 export const Route = createFileRoute("/api/verify/$token")({
   server: {
     handlers: {
-      GET: async ({ params }) => {
-        const { getDb, snowflakeToDate } = await import("@/lib/db/client.server");
-        const { verificationState, verifyTokens } = await import("@/lib/db/schema");
+      GET: async ({ request, params }) => {
+        const token = params.token.slice(0, 200);
         try {
-          const token = params.token.slice(0, 200);
+          const [{ getDb, clientIp, snowflakeToDate }, { verificationState, verifyTokens }] =
+            await Promise.all([import("@/lib/db/client.server"), import("@/lib/db/schema")]);
+          const [
+            { consumeConfiguredRateLimit, PUBLIC_STATUS_RATE_LIMIT_PER_MINUTE },
+            { verifySession },
+          ] = await Promise.all([
+            import("@/lib/rate-limit.server"),
+            import("@/lib/session.server"),
+          ]);
+          const { publicVerificationSummary } = await import("@/lib/verification-response.server");
           const db = getDb();
+          const ip = clientIp(request) || "unknown";
+          const ipLimit = await consumeConfiguredRateLimit(
+            db,
+            `verify:ip:${ip}`,
+            PUBLIC_STATUS_RATE_LIMIT_PER_MINUTE,
+            60_000,
+          );
+          if (!ipLimit.allowed) {
+            return Response.json(
+              { valid: false, reason: "rate_limited" },
+              { status: 429, headers: { "Retry-After": String(ipLimit.retryAfterSeconds) } },
+            );
+          }
+          const tokenHash = createHash("sha256").update(token).digest("hex");
+          const tokenLimit = await consumeConfiguredRateLimit(
+            db,
+            `verify:token:${tokenHash}`,
+            PUBLIC_STATUS_RATE_LIMIT_PER_MINUTE,
+            60_000,
+          );
+          if (!tokenLimit.allowed) {
+            return Response.json(
+              { valid: false, reason: "rate_limited" },
+              { status: 429, headers: { "Retry-After": String(tokenLimit.retryAfterSeconds) } },
+            );
+          }
+
           const row = (
             await db.select().from(verifyTokens).where(eq(verifyTokens.token, token)).limit(1)
           )[0];
@@ -27,29 +63,10 @@ export const Route = createFileRoute("/api/verify/$token")({
               .limit(1)
           )[0];
           const attempts = state?.attempts ?? row.attempts;
-          const discordUser = row.discordId
-            ? {
-                id: row.discordId,
-                username: row.discordUsername,
-                avatar: row.discordAvatar,
-                createdAt: snowflakeToDate(row.discordId).toISOString(),
-              }
-            : null;
-          const common = {
-            userId: row.userId,
-            guildId: row.guildId,
-            guildName: row.guildName,
-            guildMemberCount: row.guildMemberCount ?? 0,
-            expiresAt: row.expiresAt.toISOString(),
-            status: row.status,
-            referenceId: row.referenceId,
-            attempts,
-            failureReason: row.failureReason,
-            botAcknowledged: Boolean(row.botAcknowledgedAt),
-            botError: row.botError,
-            used: row.used,
-            discordUser,
-          };
+          const sessionMatches = Boolean(
+            row.discordId && verifySession(request, token, row.discordId),
+          );
+          const common = publicVerificationSummary(row, attempts, sessionMatches, snowflakeToDate);
           if (row.status === "completed")
             return Response.json({ valid: true, completed: true, ...common });
           if (row.status === "bot_update_pending") {
@@ -65,7 +82,7 @@ export const Route = createFileRoute("/api/verify/$token")({
               reason: "lockout",
               attempts,
               failureReason: row.failureReason,
-              referenceId: row.referenceId,
+              referenceId: state?.lastReferenceId ?? row.referenceId,
             });
           }
           if (state?.cooldownUntil && state.cooldownUntil.getTime() > Date.now()) {
@@ -75,7 +92,7 @@ export const Route = createFileRoute("/api/verify/$token")({
               attempts,
               cooldownUntil: state.cooldownUntil.toISOString(),
               failureReason: row.failureReason,
-              referenceId: row.referenceId,
+              referenceId: state.lastReferenceId ?? row.referenceId,
             });
           }
           if (row.used) return Response.json({ valid: false, reason: "used" });
@@ -91,7 +108,7 @@ export const Route = createFileRoute("/api/verify/$token")({
             "[verify/token] Lookup failed:",
             error instanceof Error ? error.name : "unknown",
           );
-          return Response.json({ valid: false, reason: "error" }, { status: 500 });
+          return Response.json({ valid: false, reason: "error" }, { status: 503 });
         }
       },
     },

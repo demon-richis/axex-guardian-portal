@@ -1,9 +1,10 @@
 {
   "version": 2,
-  "buildCommand": "npm run build",
+  "buildCommand": "npm run build && rm -rf api/dist-server && cp -R dist/server api/dist-server",
   "outputDirectory": "dist/client",
   "functions": {
     "api/index.mjs": {
+      "runtime": "nodejs22.x",
       "includeFiles": ["dist/server/**/*", "dist/client/**/*"]
     }
   },

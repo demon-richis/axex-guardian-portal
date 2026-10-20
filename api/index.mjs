@@ -1,6 +1,6 @@
 let handlerPromise;
 async function getHandler() {
-  handlerPromise ??= import("../dist/server/server.js").then((module) => module.default ?? module);
+  handlerPromise ??= import("./dist-server/server.js").then((module) => module.default ?? module);
   return handlerPromise;
 }
 

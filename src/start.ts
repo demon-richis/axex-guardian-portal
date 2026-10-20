@@ -1,6 +1,10 @@
+import { randomBytes } from "node:crypto";
 import { createStart, createCsrfMiddleware, createMiddleware } from "@tanstack/react-start";
 
 import { renderErrorPage } from "./lib/error-page";
+import { applySecurityHeaders, validateRuntimeEnvironment } from "./lib/security";
+
+validateRuntimeEnvironment();
 
 if (process.env["BOT_WEBHOOK_URL"]) {
   console.log("[portal] Bot verification callback configured");
@@ -10,16 +14,26 @@ if (process.env["BOT_WEBHOOK_URL"]) {
 
 for (const name of [
   "DATABASE_URL",
+  "BOT_TO_PORTAL_KEY",
+  "PORTAL_TO_BOT_KEY",
   "AXEX_BOT_API_KEY",
   "BOT_WEBHOOK_URL",
   "DISCORD_CLIENT_ID",
   "DISCORD_CLIENT_SECRET",
   "DISCORD_REDIRECT_URI",
+  "TURNSTILE_SITE_KEY",
+  "TURNSTILE_SECRET_KEY",
   "PROXYCHECK_API_KEY",
   "INTELLIGENCE_URL",
   "INTELLIGENCE_API_KEY",
+  "CRON_SECRET",
+  "TRUSTED_PROXY_MODE",
 ]) {
-  if (!process.env[name])
+  const legacyApiKeyConfigured =
+    name === "BOT_TO_PORTAL_KEY" || name === "PORTAL_TO_BOT_KEY"
+      ? Boolean(process.env["AXEX_BOT_API_KEY"])
+      : false;
+  if (!process.env[name] && !legacyApiKeyConfigured)
     console.warn(`[portal] ${name} is not configured; related functionality may be unavailable`);
 }
 
@@ -45,6 +59,12 @@ const csrfMiddleware = createCsrfMiddleware({
   filter: (ctx) => ctx.handlerType === "serverFn",
 });
 
+const securityHeadersMiddleware = createMiddleware().server(async ({ request, next }) => {
+  const nonce = randomBytes(16).toString("base64");
+  const result = await next({ context: { cspNonce: nonce } });
+  return applySecurityHeaders(request, result.response, nonce);
+});
+
 export const startInstance = createStart(() => ({
-  requestMiddleware: [errorMiddleware, csrfMiddleware],
+  requestMiddleware: [securityHeadersMiddleware, errorMiddleware, csrfMiddleware],
 }));

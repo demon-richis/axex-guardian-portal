@@ -1,8 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { and, eq, gt, inArray, lt } from "drizzle-orm";
+import { and, eq, gt, inArray } from "drizzle-orm";
 import { z } from "zod";
 import { isReferenceIdCollision } from "../../lib/reference-id.server.ts";
-import type { auditLogs, verifyTokens } from "../../lib/db/schema.ts";
+import type { auditLogs, verificationState, verifyTokens } from "../../lib/db/schema.ts";
 import type { getDb } from "../../lib/db/client.server.ts";
 
 type BotTokenDependencies = {
@@ -10,6 +10,7 @@ type BotTokenDependencies = {
   getDb: typeof getDb;
   auditLogs: typeof auditLogs;
   verifyTokens: typeof verifyTokens;
+  verificationState: typeof verificationState;
 };
 
 const Body = z.object({
@@ -44,12 +45,6 @@ function failedResponse(stage: string, error: unknown) {
   return Response.json({ error: "Internal server error" }, { status: 500 });
 }
 
-function retentionDaysFromEnvironment(value: string | undefined) {
-  const parsed = Number(value || 90);
-  if (!Number.isFinite(parsed)) return 90;
-  return Math.min(365, Math.max(7, parsed));
-}
-
 export async function handleBotTokenRequest(request: Request, dependencies: BotTokenDependencies) {
   console.log("[bot/token] Request received");
   let stage = "authentication";
@@ -67,18 +62,37 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
     stage = "database_initialization";
     const db = dependencies.getDb();
     const now = new Date();
-    const retentionDays = retentionDaysFromEnvironment(process.env["AXEX_RETENTION_DAYS"]);
-    const retentionCutoff = new Date(now.getTime() - retentionDays * 86_400_000);
-
-    stage = "retention_cleanup";
-    await db
-      .delete(dependencies.verifyTokens)
-      .where(lt(dependencies.verifyTokens.createdAt, retentionCutoff));
-    await db
-      .delete(dependencies.auditLogs)
-      .where(lt(dependencies.auditLogs.createdAt, retentionCutoff));
 
     const { token, userId, guildId, guildName, guildMemberCount, expiresAt } = parsed.data;
+    stage = "verification_state_lookup";
+    const state = (
+      await db
+        .select()
+        .from(dependencies.verificationState)
+        .where(
+          and(
+            eq(dependencies.verificationState.userId, userId),
+            eq(dependencies.verificationState.guildId, guildId),
+          ),
+        )
+        .limit(1)
+    )[0];
+    if (state?.lockedAt || (state?.attempts ?? 0) >= 3) {
+      return Response.json(
+        { error: "Verification is locked", locked: true, attempts: state?.attempts ?? 0 },
+        { status: 423 },
+      );
+    }
+    if (state?.cooldownUntil && state.cooldownUntil.getTime() > now.getTime()) {
+      return Response.json(
+        {
+          error: "Verification is on cooldown",
+          cooldownUntil: state.cooldownUntil.toISOString(),
+          attempts: state.attempts,
+        },
+        { status: 429 },
+      );
+    }
     stage = "active_token_lookup";
     const active = await db
       .select({
@@ -128,6 +142,16 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
             referenceId: dependencies.verifyTokens.referenceId,
           });
         if (inserted[0]) {
+          await db
+            .insert(dependencies.verificationState)
+            .values({ guildId, userId, lastReferenceId: inserted[0].referenceId, updatedAt: now })
+            .onConflictDoUpdate({
+              target: [
+                dependencies.verificationState.guildId,
+                dependencies.verificationState.userId,
+              ],
+              set: { lastReferenceId: inserted[0].referenceId, updatedAt: now },
+            });
           console.log("[bot/token] Saved successfully");
           return Response.json({
             success: true,
@@ -184,16 +208,18 @@ export const Route = createFileRoute("/api/bot/token")({
     handlers: {
       POST: async ({ request }) => {
         try {
-          const [{ validateApiKey }, { verifyTokens, auditLogs }, { getDb }] = await Promise.all([
-            import("@/lib/api-auth.server"),
-            import("@/lib/db/schema"),
-            import("@/lib/db/client.server"),
-          ]);
+          const [{ validateApiKey }, { verifyTokens, verificationState, auditLogs }, { getDb }] =
+            await Promise.all([
+              import("@/lib/api-auth.server"),
+              import("@/lib/db/schema"),
+              import("@/lib/db/client.server"),
+            ]);
           return handleBotTokenRequest(request, {
             validateApiKey,
-            getDb,
-            verifyTokens,
             auditLogs,
+            verifyTokens,
+            verificationState,
+            getDb,
           });
         } catch (error) {
           return failedResponse("dependency_loading", error);

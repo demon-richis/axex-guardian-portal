@@ -1,15 +1,17 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import type { getDb } from "./db/client.server";
 import { auditLogs, suspiciousAttempts, verifyTokens } from "./db/schema.ts";
-import { answerMatches, hashChallengeAnswer } from "./verification-challenge.server.ts";
+import { ensureVerificationState } from "./verification-state.server.ts";
+import { verifyTurnstile } from "./turnstile.server.ts";
 
 type PortalDb = ReturnType<typeof getDb>;
 
 export type ChallengeSubmission = {
   token: string;
   challengeId: string;
-  answer: string;
+  answer?: string | undefined;
+  turnstileToken?: string | undefined;
   discordId?: string | undefined;
   discordTag?: string | undefined;
   discordAvatar?: string | null | undefined;
@@ -21,8 +23,11 @@ export type ChallengeSubmission = {
   vpnDetected?: boolean | undefined;
   vpnType?: string | null | undefined;
   observedIp: string;
+  requestHostname: string;
   isVpn: boolean;
   vpnTypeDetected: string | null;
+  turnstileFetch?: typeof fetch | undefined;
+  turnstileEnvironment?: NodeJS.ProcessEnv | undefined;
   now?: Date | undefined;
 };
 
@@ -54,14 +59,14 @@ export async function submitVerificationChallenge(
     await db.select().from(verifyTokens).where(eq(verifyTokens.token, input.token)).limit(1)
   )[0];
   if (!row) return { success: false, error: "invalid_token", httpStatus: 400 };
+  const state = await ensureVerificationState(db, row.guildId, row.userId, now);
+  if (!state) return { success: false, error: "invalid_token", httpStatus: 400 };
 
-  const submittedDigest = hashChallengeAnswer(
-    input.challengeId,
-    input.answer,
-    input.token,
-    row.discordId ?? "",
-    row.guildId,
-  );
+  const submittedDigest = createHash("sha256")
+    .update(
+      `${input.token}\u0000${row.discordId ?? ""}\u0000${row.guildId}\u0000${input.challengeId}\u0000${input.turnstileToken ?? ""}`,
+    )
+    .digest("hex");
   if (
     row.challengeId === input.challengeId &&
     row.challengeConsumedAt &&
@@ -73,10 +78,10 @@ export async function submitVerificationChallenge(
       passed: Boolean(row.completedAt),
       status: row.status,
       referenceId: row.referenceId,
-      attempts: row.attempts,
-      cooldownUntil: row.cooldownUntil?.toISOString() ?? null,
+      attempts: state.attempts,
+      cooldownUntil: state.cooldownUntil?.toISOString() ?? null,
       failureReason: row.failureReason,
-      locked: row.status === "locked",
+      locked: Boolean(state.lockedAt) || state.attempts >= 3,
       idempotent: true,
       ...(terminal && row.status === "bot_update_pending" ? { error: "bot_update_pending" } : {}),
     };
@@ -98,22 +103,27 @@ export async function submitVerificationChallenge(
   if (row.challengeId === input.challengeId && row.challengeConsumedAt) {
     return { success: false, error: "challenge_already_consumed", httpStatus: 409 };
   }
-  if (row.status === "locked" || (row.attempts ?? 0) >= 3) {
-    return { success: false, error: "attempts_exhausted", attempts: row.attempts, httpStatus: 429 };
+  if (row.status === "locked" || state.lockedAt || state.attempts >= 3) {
+    return {
+      success: false,
+      error: "attempts_exhausted",
+      attempts: state.attempts,
+      httpStatus: 429,
+    };
   }
-  if (row.cooldownUntil && row.cooldownUntil.getTime() > now.getTime()) {
+  if (state.cooldownUntil && state.cooldownUntil.getTime() > now.getTime()) {
     return {
       success: false,
       error: "cooldown",
-      attempts: row.attempts,
-      cooldownUntil: row.cooldownUntil.toISOString(),
+      attempts: state.attempts,
+      cooldownUntil: state.cooldownUntil.toISOString(),
       httpStatus: 429,
     };
   }
   if (
     !row.challengeId ||
     row.challengeId !== input.challengeId ||
-    !row.challengeAnswerHash ||
+    !row.challengeIssuedAt ||
     !row.challengeExpiresAt ||
     row.challengeExpiresAt.getTime() <= now.getTime() ||
     row.challengeConsumedAt
@@ -124,18 +134,35 @@ export async function submitVerificationChallenge(
     return { success: false, error: "missing_reference", httpStatus: 503 };
   }
 
-  const proofCorrect = answerMatches(input.challengeId, input.answer, row.challengeAnswerHash, {
-    token: input.token,
-    discordId: row.discordId,
-    guildId: row.guildId,
-  });
-  const attempts = (row.attempts ?? 0) + 1;
+  const responseTimeMs = Math.max(0, now.getTime() - row.challengeIssuedAt.getTime());
+  const turnstile = await verifyTurnstile(
+    input.turnstileToken,
+    {
+      token: input.token,
+      discordId: row.discordId,
+      guildId: row.guildId,
+      challengeId: input.challengeId,
+      requestHostname: input.requestHostname,
+      remoteIp: input.observedIp,
+    },
+    input.turnstileEnvironment ?? process.env,
+    input.turnstileFetch,
+  );
+  if (!turnstile.ok && turnstile.error === "turnstile_unavailable") {
+    return {
+      success: false,
+      error: turnstile.error,
+      httpStatus: 503,
+    };
+  }
+  const proofCorrect = turnstile.ok;
+  const attempts = state.attempts + 1;
   const accountAgeDays = ageInDays(row.discordId, now);
   const clickMs = input.clickMs ?? null;
   const honeypotTriggered = Boolean(input.honeypotTriggered || input.honeypot?.trim());
   const vpnDetected = input.isVpn || input.vpnDetected === true;
   const vpnType = input.vpnTypeDetected ?? input.vpnType ?? null;
-  const botDetected = honeypotTriggered || (clickMs !== null && clickMs < 1500);
+  const botDetected = false;
   const sameIpUsers = input.observedIp
     ? Number(
         (
@@ -149,23 +176,17 @@ export async function submitVerificationChallenge(
     ? "Hidden verification trap activated"
     : vpnDetected
       ? "VPN or proxy detected"
-      : accountAgeDays < 3
+      : accountAgeDays < 7
         ? "New Discord account"
-        : clickMs !== null && clickMs < 800
-          ? "Unusually fast response"
-          : clickMs !== null && clickMs > 58_000
-            ? "Response near timeout"
-            : attempts >= 2
-              ? "Repeated verification attempt"
-              : sameIpUsers >= 3
-                ? "Shared IP used by multiple users"
-                : !proofCorrect
-                  ? "Wrong challenge answer"
-                  : null;
+        : attempts >= 2
+          ? "Repeated verification attempt"
+          : sameIpUsers >= 3
+            ? "Shared IP used by multiple users"
+            : null;
   const flagged = Boolean(automaticReason);
-  const finalPassed = proofCorrect && !vpnDetected && !botDetected && accountAgeDays >= 3;
-  const locked = !finalPassed && attempts >= 3;
-  const terminal = finalPassed || locked || vpnDetected || botDetected;
+  const finalPassed = proofCorrect && !vpnDetected;
+  const locked = !finalPassed && (attempts >= 3 || vpnDetected);
+  const terminal = finalPassed || locked || vpnDetected;
   const cooldownUntil = terminal
     ? null
     : attempts === 1
@@ -173,15 +194,16 @@ export async function submitVerificationChallenge(
       : attempts === 2
         ? new Date(now.getTime() + 3 * 60 * 60 * 1000)
         : null;
+  const committedAttempts = finalPassed ? 0 : attempts;
+  const committedCooldownUntil = finalPassed ? null : cooldownUntil;
+  const committedLocked = finalPassed ? false : locked;
   const event = botDetected
     ? "BOT_DETECTED"
     : vpnDetected
       ? "VPN_BLOCKED"
       : finalPassed
         ? "VERIFIED"
-        : input.timeout || (clickMs !== null && clickMs > 58_000)
-          ? "TIMEOUT"
-          : "WRONG_ANSWER";
+        : "WRONG_ANSWER";
   const reason = automaticReason ?? (finalPassed ? null : (input.failureReason ?? event));
   const callbackStatus = terminal ? "bot_update_pending" : "failed";
   const claimId = randomUUID();
@@ -201,12 +223,13 @@ export async function submitVerificationChallenge(
     honeypotTriggered,
     accountAgeDays,
     clickMs,
+    responseTimeMs,
     flagged,
     flagReason: reason,
-    attempts,
-    cooldownUntil: cooldownUntil?.toISOString() ?? null,
-    failureReason: input.timeout ? "TIMEOUT" : !finalPassed ? reason : null,
-    locked,
+    attempts: committedAttempts,
+    cooldownUntil: committedCooldownUntil?.toISOString() ?? null,
+    failureReason: !finalPassed ? reason : null,
+    locked: committedLocked,
   };
 
   const outboxCte = terminal
@@ -219,16 +242,42 @@ export async function submitVerificationChallenge(
       )`
     : sql`queued AS (SELECT NULL::integer AS id WHERE FALSE)`;
   const claimResult = await db.execute(sql`
-    WITH claimed AS (
+    WITH state_claim AS (
+      UPDATE verification_state
+      SET attempts = ${committedAttempts},
+          cooldown_until = ${committedCooldownUntil},
+          locked_at = ${committedLocked ? now : null},
+          last_reference_id = ${row.referenceId},
+          updated_at = ${now}
+      WHERE guild_id = ${row.guildId}
+        AND user_id = ${row.userId}
+        AND attempts = ${state.attempts}
+        AND locked_at IS NULL
+        AND (cooldown_until IS NULL OR cooldown_until <= ${now})
+        AND EXISTS (
+          SELECT 1 FROM verify_tokens
+          WHERE token = ${input.token}
+            AND discord_id = ${row.discordId}
+            AND challenge_id = ${input.challengeId}
+            AND used = FALSE
+            AND challenge_consumed_at IS NULL
+            AND challenge_claim_id IS NULL
+            AND challenge_expires_at > ${now}
+            AND expires_at > ${now}
+        )
+      RETURNING attempts
+    ),
+    claimed AS (
       UPDATE verify_tokens
       SET challenge_consumed_at = ${now},
           challenge_claim_id = ${claimId},
           challenge_submission_hash = ${submittedDigest},
-          attempts = ${attempts},
+          attempts = ${committedAttempts},
           used = ${terminal},
           status = ${callbackStatus},
-          cooldown_until = ${cooldownUntil},
+          cooldown_until = ${committedCooldownUntil},
           failure_reason = ${reason},
+          response_time_ms = ${responseTimeMs},
           discord_tag = ${safeTag},
           discord_avatar = ${safeAvatar},
           ip_address = ${input.observedIp || null},
@@ -241,12 +290,12 @@ export async function submitVerificationChallenge(
       WHERE token = ${input.token}
         AND discord_id = ${row.discordId}
         AND challenge_id = ${input.challengeId}
-        AND challenge_answer_hash = ${row.challengeAnswerHash}
         AND used = FALSE
         AND challenge_consumed_at IS NULL
+        AND challenge_claim_id IS NULL
         AND challenge_expires_at > ${now}
         AND expires_at > ${now}
-        AND attempts < 3
+        AND EXISTS (SELECT 1 FROM state_claim)
       RETURNING token
     ),
     ${outboxCte}
@@ -262,15 +311,16 @@ export async function submitVerificationChallenge(
       current.challengeConsumedAt &&
       current.challengeSubmissionHash === submittedDigest
     ) {
+      const currentState = await ensureVerificationState(db, row.guildId, row.userId, now);
       return {
         success: true,
         passed: Boolean(current.completedAt),
         status: current.status,
         referenceId: current.referenceId,
-        attempts: current.attempts,
-        cooldownUntil: current.cooldownUntil?.toISOString() ?? null,
+        attempts: currentState?.attempts ?? current.attempts,
+        cooldownUntil: currentState?.cooldownUntil?.toISOString() ?? null,
         failureReason: current.failureReason,
-        locked: current.status === "locked",
+        locked: Boolean(currentState?.lockedAt) || (currentState?.attempts ?? 0) >= 3,
         idempotent: true,
       };
     }
@@ -325,7 +375,7 @@ export async function submitVerificationChallenge(
       flagged,
       flagReason: reason,
       metadata: {
-        attempts,
+        attempts: committedAttempts,
         passed: finalPassed,
         botDetected,
         honeypotTriggered,
@@ -345,9 +395,9 @@ export async function submitVerificationChallenge(
     passed: finalPassed,
     status: callbackStatus,
     referenceId: row.referenceId,
-    attempts,
-    cooldownUntil: cooldownUntil?.toISOString() ?? null,
+    attempts: committedAttempts,
+    cooldownUntil: committedCooldownUntil?.toISOString() ?? null,
     failureReason: reason,
-    locked,
+    locked: committedLocked,
   };
 }

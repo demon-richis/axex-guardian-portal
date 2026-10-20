@@ -1,19 +1,50 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { consumeConfiguredRateLimit } from "../../lib/rate-limit.server.ts";
 
 export const Route = createFileRoute("/api/auth/callback")({
   server: {
     handlers: {
       GET: async ({ request }) => {
         console.log("[auth/callback] OAuth callback received");
-        const { getDb, redirectUri } = await import("@/lib/db/client.server");
-        const { bindOAuthIdentity } = await import("@/lib/discord-identity.server");
+        const { getDb, redirectUri } = await import("../../lib/db/client.server.ts");
+        const { clientIp } = await import("../../lib/client-ip.server.ts");
+        const { bindOAuthIdentity } = await import("../../lib/discord-identity.server.ts");
+        const { consumeOAuthState, createSessionCookie } =
+          await import("../../lib/session.server.ts");
         const url = new URL(request.url);
+        try {
+          const ip = clientIp(request) || "unknown";
+          const db = process.env["RATE_LIMIT_BACKEND"] === "memory" ? null : getDb();
+          const limit = await consumeConfiguredRateLimit(db, `auth-callback:ip:${ip}`, 20, 60_000);
+          if (!limit.allowed) {
+            return Response.json(
+              { error: "rate_limited" },
+              { status: 429, headers: { "Retry-After": String(limit.retryAfterSeconds) } },
+            );
+          }
+        } catch (error) {
+          console.error(
+            "[auth/callback] Rate limit unavailable:",
+            error instanceof Error ? error.name : "unknown",
+          );
+          return Response.json({ error: "temporarily_unavailable" }, { status: 503 });
+        }
         const code = url.searchParams.get("code");
-        const token = url.searchParams.get("state") ?? "";
-        const back = (q: string) =>
-          Response.redirect(`${url.origin}/verify?token=${encodeURIComponent(token)}&${q}`, 302);
-        if (!code || !token) {
-          console.error("[auth/callback] Missing OAuth code or state token");
+        const stateNonce = url.searchParams.get("state") ?? "";
+        const state = stateNonce ? consumeOAuthState(request, stateNonce) : null;
+        const back = (query: string, sessionCookie?: string) => {
+          const destination = new URL("/verify", url.origin);
+          if (state?.token) destination.searchParams.set("token", state.token);
+          for (const [key, value] of new URLSearchParams(query)) {
+            destination.searchParams.set(key, value);
+          }
+          const headers = new Headers({ Location: destination.toString() });
+          if (state) headers.append("Set-Cookie", state.clearCookie);
+          if (sessionCookie) headers.append("Set-Cookie", sessionCookie);
+          return new Response(null, { status: 302, headers });
+        };
+        if (!code || !state) {
+          console.error("[auth/callback] Missing, mismatched, or expired OAuth state");
           return back("error=auth");
         }
         try {
@@ -46,7 +77,7 @@ export const Route = createFileRoute("/api/auth/callback")({
             global_name?: string | null;
             avatar: string | null;
           };
-          const binding = await bindOAuthIdentity(getDb(), token, {
+          const binding = await bindOAuthIdentity(getDb(), state.token, {
             id: user.id,
             username: user.username,
             globalName: user.global_name,
@@ -57,7 +88,7 @@ export const Route = createFileRoute("/api/auth/callback")({
             return back("error=auth");
           }
           console.log("[auth/callback] OAuth identity matched the bot-issued target");
-          return back("auth=1");
+          return back("auth=1", createSessionCookie(state.token, user.id));
         } catch (e) {
           console.error("[auth/callback] Failed:", e instanceof Error ? e.name : "unknown");
           return back("error=auth");

@@ -61,8 +61,8 @@ const csrfMiddleware = createCsrfMiddleware({
 
 const securityHeadersMiddleware = createMiddleware().server(async ({ request, next }) => {
   const nonce = randomBytes(16).toString("base64");
-  const response = await next({ context: { cspNonce: nonce } });
-  return applySecurityHeaders(request, response as unknown as Response, nonce);
+  const result = await next({ context: { cspNonce: nonce } });
+  return applySecurityHeaders(request, result.response, nonce);
 });
 
 export const startInstance = createStart(() => ({

@@ -14,7 +14,7 @@
     }
   ],
   "rewrites": [
-    { "source": "/api/:path*", "destination": "/api" },
-    { "source": "/(.*)", "destination": "/api" }
+    { "source": "/api/:path*", "destination": "/api?__axex_path=/api/:path*" },
+    { "source": "/:path*", "destination": "/api?__axex_path=/:path*" }
   ]
 }

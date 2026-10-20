@@ -9,8 +9,17 @@ async function getHandler() {
 function requestUrl(request) {
   const forwardedProto = request.headers["x-forwarded-proto"]?.split(",")[0]?.trim() || "https";
   const host = request.headers.host || request.headers["x-forwarded-host"] || "localhost";
-  const originalPath = request.headers["x-matched-path"] || request.url || "/";
-  return new URL(originalPath, `${forwardedProto}://${host}`).toString();
+  const origin = `${forwardedProto}://${host}`;
+  const incoming = new URL(request.url || "/", origin);
+  const rewrittenPath = incoming.searchParams.get("__axex_path");
+  const matchedPath = request.headers["x-matched-path"];
+  const originalPath = rewrittenPath || matchedPath || incoming.pathname;
+  const target = new URL(originalPath, origin);
+
+  for (const [key, value] of incoming.searchParams) {
+    if (key !== "__axex_path") target.searchParams.append(key, value);
+  }
+  return target.toString();
 }
 
 async function readBody(request) {

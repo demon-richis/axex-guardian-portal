@@ -15,7 +15,10 @@ type WorkerConfig = { webhookUrl: string | null; apiKey: string | null };
 
 const BOT_CALLBACK_TIMEOUT_MS = 8_000;
 
-async function claimOne(db: PortalDb): Promise<{ claimId: string; row: OutboxRow } | null> {
+async function claimOne(
+  db: PortalDb,
+  referenceId?: string,
+): Promise<{ claimId: string; row: OutboxRow } | null> {
   const claimId = randomUUID();
   const result = await db.execute(sql`
     WITH candidate AS (
@@ -23,6 +26,7 @@ async function claimOne(db: PortalDb): Promise<{ claimId: string; row: OutboxRow
       FROM bot_callback_outbox
       WHERE next_attempt_at <= now()
         AND (status = 'pending' OR (status = 'processing' AND lease_until <= now()))
+        AND (${referenceId ?? null}::text IS NULL OR reference_id = ${referenceId ?? null})
       ORDER BY id
       FOR UPDATE SKIP LOCKED
       LIMIT 1
@@ -98,8 +102,9 @@ async function deliverOne(
   db: PortalDb,
   fetcher: Fetcher,
   config: WorkerConfig,
+  referenceId?: string,
 ): Promise<"delivered" | "retry" | "empty"> {
-  const claimed = await claimOne(db);
+  const claimed = await claimOne(db, referenceId);
   if (!claimed) return "empty";
   let delivered = false;
   let errorCode: string | null = null;
@@ -135,12 +140,53 @@ export async function processBotCallbackOutboxWith(
   config: WorkerConfig,
   fetcher: Fetcher = fetch,
   maxJobs = 5,
+  referenceId?: string,
 ): Promise<{ delivered: number; retrying: number }> {
   const safeLimit = Math.max(1, Math.min(10, Math.floor(maxJobs)));
+  const stale = await db.execute(sql`
+    WITH stale AS (
+      SELECT id
+      FROM bot_callback_outbox
+      WHERE status = 'pending'
+        AND created_at <= now() - interval '5 minutes'
+        AND stuck_alerted_at IS NULL
+      ORDER BY created_at
+      FOR UPDATE SKIP LOCKED
+      LIMIT 100
+    ),
+    alerted AS (
+      UPDATE bot_callback_outbox AS queued
+      SET stuck_alerted_at = now(), updated_at = now()
+      FROM stale
+      WHERE queued.id = stale.id
+      RETURNING queued.id, queued.token, queued.reference_id, queued.created_at
+    )
+    INSERT INTO audit_logs (guild_id, user_id, event_type, severity, metadata, created_at)
+    SELECT token.guild_id, token.user_id, 'OUTBOX_STUCK', 'warn',
+      jsonb_build_object(
+        'outboxId', alerted.id,
+        'referenceId', alerted.reference_id,
+        'pendingSince', alerted.created_at
+      ),
+      now()
+    FROM alerted
+    JOIN verify_tokens AS token ON token.token = alerted.token
+    RETURNING guild_id, metadata
+  `);
+  for (const row of stale.rows as Array<{ guild_id: string; metadata: Record<string, unknown> }>) {
+    console.warn(
+      JSON.stringify({
+        level: "warn",
+        event: "outbox_stuck",
+        guildId: row.guild_id,
+        ...row.metadata,
+      }),
+    );
+  }
   let delivered = 0;
   let retrying = 0;
   for (let index = 0; index < safeLimit; index += 1) {
-    const result = await deliverOne(db, fetcher, config);
+    const result = await deliverOne(db, fetcher, config, referenceId);
     if (result === "empty") break;
     if (result === "delivered") delivered += 1;
     else retrying += 1;
@@ -148,17 +194,18 @@ export async function processBotCallbackOutboxWith(
   return { delivered, retrying };
 }
 
-export async function processBotCallbackOutbox(maxJobs = 5): Promise<{
-  delivered: number;
-  retrying: number;
-}> {
+export async function processBotCallbackOutbox(
+  maxJobs = 5,
+  referenceId?: string,
+): Promise<{ delivered: number; retrying: number }> {
   return processBotCallbackOutboxWith(
     getDb(),
     {
       webhookUrl: process.env["BOT_WEBHOOK_URL"] ?? null,
-      apiKey: process.env["AXEX_BOT_API_KEY"] ?? null,
+      apiKey: process.env["PORTAL_TO_BOT_KEY"] ?? process.env["AXEX_BOT_API_KEY"] ?? null,
     },
     fetch,
     maxJobs,
+    referenceId,
   );
 }

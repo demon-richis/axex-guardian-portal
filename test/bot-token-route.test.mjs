@@ -14,9 +14,12 @@ const migrationFiles = [
   "0001_lowly_silver_samurai.sql",
   "0002_absent_goblin_queen.sql",
   "0003_server_verified_challenge_outbox.sql",
+  "0004_durable_verification_state.sql",
+  "0005_turnstile_challenge_timing.sql",
+  "0006_shared_rate_limits_and_ip_cache.sql",
+  "0007_lock_legacy_exhausted_verification_state.sql",
 ];
 const TEST_API_KEY = "unit-test-api-key-only";
-const originalRetentionDays = process.env.AXEX_RETENTION_DAYS;
 
 async function applyMigration(client, name) {
   const contents = await readFile(join(root, "drizzle", name), "utf8");
@@ -39,6 +42,7 @@ function dependencies(db, overrides = {}) {
     getDb: () => db,
     auditLogs: schema.auditLogs,
     verifyTokens: schema.verifyTokens,
+    verificationState: schema.verificationState,
     ...overrides,
   };
 }
@@ -79,8 +83,6 @@ async function withCapturedErrors(run) {
 
 test("token creation succeeds against the current isolated schema", async () => {
   const { client, db } = await freshDb();
-  const previousValue = process.env.AXEX_RETENTION_DAYS;
-  process.env.AXEX_RETENTION_DAYS = "misconfigured-not-a-number";
   try {
     const response = await handleBotTokenRequest(validRequest(), dependencies(db));
     const data = await response.json();
@@ -93,13 +95,11 @@ test("token creation succeeds against the current isolated schema", async () => 
     assert.equal(rows[0].userId, "123456789012345678");
     assert.equal(rows[0].guildId, "234567890123456789");
   } finally {
-    if (previousValue === undefined) delete process.env.AXEX_RETENTION_DAYS;
-    else process.env.AXEX_RETENTION_DAYS = previousValue;
     await client.close();
   }
 });
 
-test("omitting migration 0003 reproduces a token-insert schema mismatch", async () => {
+test("omitting migration 0004 reproduces a durable-state schema mismatch", async () => {
   const { client, db } = await freshDb({ through: 3 });
   try {
     const { result: response, entries } = await withCapturedErrors(() =>
@@ -107,8 +107,8 @@ test("omitting migration 0003 reproduces a token-insert schema mismatch", async 
     );
     assert.equal(response.status, 500);
     const diagnostic = entries.join(" ");
-    assert.match(diagnostic, /token_insert/);
-    assert.match(diagnostic, /"sqlState":"42703"/);
+    assert.match(diagnostic, /verification_state_lookup/);
+    assert.match(diagnostic, /"sqlState":"42P01"/);
     assert.doesNotMatch(diagnostic, /pre-0003-token/);
   } finally {
     await client.close();
@@ -179,15 +179,10 @@ test("an outdated schema produces a reproducible SQLSTATE and active-lookup stag
     );
     assert.equal(response.status, 500);
     const diagnostic = entries.join(" ");
-    assert.match(diagnostic, /active_token_lookup/);
-    assert.match(diagnostic, /"sqlState":"42703"/);
+    assert.match(diagnostic, /verification_state_lookup/);
+    assert.match(diagnostic, /"sqlState":"42P01"/);
     assert.doesNotMatch(diagnostic, /mock-token-123|123456789012345678/);
   } finally {
     await client.close();
   }
-});
-
-test.after(() => {
-  if (originalRetentionDays === undefined) delete process.env.AXEX_RETENTION_DAYS;
-  else process.env.AXEX_RETENTION_DAYS = originalRetentionDays;
 });

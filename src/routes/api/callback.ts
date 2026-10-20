@@ -8,11 +8,29 @@ export const Route = createFileRoute("/api/callback")({
     handlers: {
       POST: async ({ request }) => {
         console.log("[callback] Challenge submission received");
-        const { isSameOrigin, rateLimit, requestAddress } = await import("@/lib/rate-limit.server");
+        const { isSameOrigin, consumeConfiguredRateLimit } =
+          await import("@/lib/rate-limit.server");
         if (!isSameOrigin(request)) {
           return Response.json({ success: false, error: "cross_origin_request" }, { status: 403 });
         }
-        const requestLimit = rateLimit(`callback:${requestAddress(request)}`, 12, 60_000);
+        const [{ clientIp, getDb }, { unauthorizedSessionResponse, verifySession }] =
+          await Promise.all([import("@/lib/db/client.server"), import("@/lib/session.server")]);
+        let db;
+        let requestLimit;
+        try {
+          db = getDb();
+          const ip = clientIp(request) || "unknown";
+          requestLimit = await consumeConfiguredRateLimit(db, `callback:ip:${ip}`, 12, 60_000);
+        } catch (error) {
+          console.error(
+            "[callback] Rate limit unavailable:",
+            error instanceof Error ? error.name : "unknown",
+          );
+          return Response.json(
+            { success: false, error: "verification_unavailable" },
+            { status: 503 },
+          );
+        }
         if (!requestLimit.allowed) {
           return Response.json(
             {
@@ -27,8 +45,28 @@ export const Route = createFileRoute("/api/callback")({
         if (!parsed.success) {
           return Response.json({ success: false, error: "invalid_request" }, { status: 400 });
         }
+        if (!verifySession(request, parsed.data.token, parsed.data.discordId)) {
+          return unauthorizedSessionResponse();
+        }
         const tokenFingerprint = createHash("sha256").update(parsed.data.token).digest("hex");
-        const tokenLimit = rateLimit(`callback-token:${tokenFingerprint}`, 12, 60_000);
+        let tokenLimit;
+        try {
+          tokenLimit = await consumeConfiguredRateLimit(
+            db,
+            `callback:token:${tokenFingerprint}`,
+            12,
+            60_000,
+          );
+        } catch (error) {
+          console.error(
+            "[callback] Rate limit unavailable:",
+            error instanceof Error ? error.name : "unknown",
+          );
+          return Response.json(
+            { success: false, error: "verification_unavailable" },
+            { status: 503 },
+          );
+        }
         if (!tokenLimit.allowed) {
           return Response.json(
             {
@@ -41,14 +79,13 @@ export const Route = createFileRoute("/api/callback")({
         }
 
         try {
-          const [{ getDb, checkIp, clientIp }, { verifyTokens }, { submitVerificationChallenge }] =
+          const [{ verifyTokens }, { checkIpCached }, { submitVerificationChallenge }] =
             await Promise.all([
-              import("@/lib/db/client.server"),
               import("@/lib/db/schema"),
+              import("@/lib/ip-check-cache.server"),
               import("@/lib/verification-submit.server"),
             ]);
-          const { token, challengeId, answer } = parsed.data;
-          const db = getDb();
+          const { token, challengeId, turnstileToken } = parsed.data;
           const row = (
             await db.select().from(verifyTokens).where(eq(verifyTokens.token, token)).limit(1)
           )[0];
@@ -66,7 +103,7 @@ export const Route = createFileRoute("/api/callback")({
             row.challengeSubmissionHash,
           );
           if (!duplicate && row && !row.used && row.expiresAt.getTime() > Date.now()) {
-            const ip = await checkIp(observedIp);
+            const ip = await checkIpCached(db, observedIp);
             if (ip.status === "unavailable") {
               console.error("[callback] Network security check unavailable; refusing verification");
               return Response.json(
@@ -85,7 +122,7 @@ export const Route = createFileRoute("/api/callback")({
           const result = await submitVerificationChallenge(db, {
             token,
             challengeId,
-            answer,
+            turnstileToken,
             discordId: parsed.data.discordId,
             discordTag: parsed.data.discordTag,
             discordAvatar: parsed.data.discordAvatar,
@@ -97,9 +134,42 @@ export const Route = createFileRoute("/api/callback")({
             vpnDetected: parsed.data.vpnDetected,
             vpnType: parsed.data.vpnType,
             observedIp,
+            requestHostname: new URL(request.url).hostname,
             isVpn,
             vpnTypeDetected,
           });
+          if (result.success && result.status === "bot_update_pending") {
+            try {
+              const { processBotCallbackOutbox } = await import("@/lib/bot-callback-outbox.server");
+              const delivery = processBotCallbackOutbox(1, result.referenceId ?? undefined).catch(
+                (error: unknown) => {
+                  console.error(
+                    "[callback] Immediate outbox delivery failed:",
+                    error instanceof Error ? error.name : "unknown",
+                  );
+                },
+              );
+              if (process.env["VERCEL"] === "1") {
+                try {
+                  const { waitUntil } = await import("@vercel/functions");
+                  waitUntil(delivery);
+                } catch (error) {
+                  console.error(
+                    "[callback] Could not schedule post-response delivery:",
+                    error instanceof Error ? error.name : "unknown",
+                  );
+                  await delivery;
+                }
+              } else {
+                await delivery;
+              }
+            } catch (error) {
+              console.error(
+                "[callback] Immediate outbox delivery failed:",
+                error instanceof Error ? error.name : "unknown",
+              );
+            }
+          }
           const { httpStatus, ...body } = result;
           return Response.json(body, { status: result.success ? 200 : (httpStatus ?? 400) });
         } catch (error) {

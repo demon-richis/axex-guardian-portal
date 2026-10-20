@@ -1,137 +1,114 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+import { createHash } from "node:crypto";
 
 export const Route = createFileRoute("/api/verify/$token")({
   server: {
     handlers: {
-      GET: async ({ params }) => {
-        const { getDb, snowflakeToDate } = await import("@/lib/db/client.server");
-        const { verifyTokens } = await import("@/lib/db/schema");
+      GET: async ({ request, params }) => {
+        const token = params.token.slice(0, 200);
         try {
-          const token = params.token.slice(0, 200);
-          const rows = await getDb()
-            .select()
-            .from(verifyTokens)
-            .where(eq(verifyTokens.token, token))
-            .limit(1);
-          const row = rows[0];
-          if (!row) {
-            const result = { valid: false, reason: "invalid" } as const;
-            return Response.json(result);
+          const [{ getDb, clientIp, snowflakeToDate }, { verificationState, verifyTokens }] =
+            await Promise.all([import("@/lib/db/client.server"), import("@/lib/db/schema")]);
+          const [
+            { consumeConfiguredRateLimit, PUBLIC_STATUS_RATE_LIMIT_PER_MINUTE },
+            { verifySession },
+          ] = await Promise.all([
+            import("@/lib/rate-limit.server"),
+            import("@/lib/session.server"),
+          ]);
+          const { publicVerificationSummary } = await import("@/lib/verification-response.server");
+          const db = getDb();
+          const ip = clientIp(request) || "unknown";
+          const ipLimit = await consumeConfiguredRateLimit(
+            db,
+            `verify:ip:${ip}`,
+            PUBLIC_STATUS_RATE_LIMIT_PER_MINUTE,
+            60_000,
+          );
+          if (!ipLimit.allowed) {
+            return Response.json(
+              { valid: false, reason: "rate_limited" },
+              { status: 429, headers: { "Retry-After": String(ipLimit.retryAfterSeconds) } },
+            );
           }
-          // A completed token is permanently finished. It must remain readable
-          // so reopening the link shows the completed state instead of starting
-          // OAuth and verification again, even after the original expiry time.
-          if (row.status === "completed") {
-            const result = {
-              valid: true,
-              completed: true,
-              userId: row.userId,
-              guildId: row.guildId,
-              guildName: row.guildName,
-              guildMemberCount: row.guildMemberCount ?? 0,
-              expiresAt: row.expiresAt.toISOString(),
-              status: row.status,
-              referenceId: row.referenceId,
-              attempts: row.attempts,
-              failureReason: row.failureReason,
-              botAcknowledged: Boolean(row.botAcknowledgedAt),
-              botError: row.botError,
-              used: row.used,
-              discordUser: row.discordId
-                ? {
-                    id: row.discordId,
-                    username: row.discordUsername,
-                    avatar: row.discordAvatar,
-                    createdAt: snowflakeToDate(row.discordId).toISOString(),
-                  }
-                : null,
-            } as const;
-            return Response.json(result);
+          const tokenHash = createHash("sha256").update(token).digest("hex");
+          const tokenLimit = await consumeConfiguredRateLimit(
+            db,
+            `verify:token:${tokenHash}`,
+            PUBLIC_STATUS_RATE_LIMIT_PER_MINUTE,
+            60_000,
+          );
+          if (!tokenLimit.allowed) {
+            return Response.json(
+              { valid: false, reason: "rate_limited" },
+              { status: 429, headers: { "Retry-After": String(tokenLimit.retryAfterSeconds) } },
+            );
           }
+
+          const row = (
+            await db.select().from(verifyTokens).where(eq(verifyTokens.token, token)).limit(1)
+          )[0];
+          if (!row) return Response.json({ valid: false, reason: "invalid" });
+          const state = (
+            await db
+              .select()
+              .from(verificationState)
+              .where(
+                and(
+                  eq(verificationState.guildId, row.guildId),
+                  eq(verificationState.userId, row.userId),
+                ),
+              )
+              .limit(1)
+          )[0];
+          const attempts = state?.attempts ?? row.attempts;
+          const sessionMatches = Boolean(
+            row.discordId && verifySession(request, token, row.discordId),
+          );
+          const common = publicVerificationSummary(row, attempts, sessionMatches, snowflakeToDate);
+          if (row.status === "completed")
+            return Response.json({ valid: true, completed: true, ...common });
           if (row.status === "bot_update_pending") {
             return Response.json({
               valid: true,
               pendingPassed: Boolean(row.completedAt),
-              userId: row.userId,
-              guildId: row.guildId,
-              guildName: row.guildName,
-              guildMemberCount: row.guildMemberCount ?? 0,
-              expiresAt: row.expiresAt.toISOString(),
-              status: row.status,
-              referenceId: row.referenceId,
-              attempts: row.attempts,
-              failureReason: row.failureReason,
-              botAcknowledged: Boolean(row.botAcknowledgedAt),
-              botError: row.botError,
-              used: row.used,
-              discordUser: row.discordId
-                ? {
-                    id: row.discordId,
-                    username: row.discordUsername,
-                    avatar: row.discordAvatar,
-                    createdAt: snowflakeToDate(row.discordId).toISOString(),
-                  }
-                : null,
+              ...common,
             });
           }
-          if (row.status === "locked" || (row.attempts ?? 0) >= 3) {
-            const result = {
+          if (row.status === "locked" || state?.lockedAt || attempts >= 3) {
+            return Response.json({
               valid: false,
               reason: "lockout",
-              attempts: row.attempts,
+              attempts,
               failureReason: row.failureReason,
-              referenceId: row.referenceId,
-            } as const;
-            return Response.json(result);
+              referenceId: state?.lastReferenceId ?? row.referenceId,
+            });
           }
-          if (row.cooldownUntil && row.cooldownUntil.getTime() > Date.now()) {
-            const result = {
+          if (state?.cooldownUntil && state.cooldownUntil.getTime() > Date.now()) {
+            return Response.json({
               valid: false,
               reason: "cooldown",
-              attempts: row.attempts,
-              cooldownUntil: row.cooldownUntil.toISOString(),
+              attempts,
+              cooldownUntil: state.cooldownUntil.toISOString(),
               failureReason: row.failureReason,
-              referenceId: row.referenceId,
-            } as const;
-            return Response.json(result);
+              referenceId: state.lastReferenceId ?? row.referenceId,
+            });
           }
-          if (row.used && !["completed", "bot_update_pending"].includes(row.status)) {
-            const result = { valid: false, reason: "used" } as const;
-            return Response.json(result);
-          }
-          if (row.expiresAt.getTime() < Date.now()) {
-            const result = { valid: false, reason: "expired" } as const;
-            return Response.json(result);
-          }
-          const result = {
+          if (row.used) return Response.json({ valid: false, reason: "used" });
+          if (row.expiresAt.getTime() < Date.now())
+            return Response.json({ valid: false, reason: "expired" });
+          return Response.json({
             valid: true,
-            userId: row.userId,
-            guildId: row.guildId,
-            guildName: row.guildName,
-            guildMemberCount: row.guildMemberCount ?? 0,
-            expiresAt: row.expiresAt.toISOString(),
-            status: row.status,
-            referenceId: row.referenceId,
-            attempts: row.attempts,
-            cooldownUntil: row.cooldownUntil?.toISOString() ?? null,
-            failureReason: row.failureReason,
-            botAcknowledged: Boolean(row.botAcknowledgedAt),
-            botError: row.botError,
-            used: row.used,
-            discordUser: row.discordId
-              ? {
-                  id: row.discordId,
-                  username: row.discordUsername,
-                  avatar: row.discordAvatar,
-                  createdAt: snowflakeToDate(row.discordId).toISOString(),
-                }
-              : null,
-          };
-          return Response.json(result);
-        } catch (e) {
-          console.error("[verify/token] Lookup failed:", e instanceof Error ? e.name : "unknown");
-          return Response.json({ valid: false, reason: "error" }, { status: 500 });
+            ...common,
+            cooldownUntil: state?.cooldownUntil?.toISOString() ?? null,
+          });
+        } catch (error) {
+          console.error(
+            "[verify/token] Lookup failed:",
+            error instanceof Error ? error.name : "unknown",
+          );
+          return Response.json({ valid: false, reason: "error" }, { status: 503 });
         }
       },
     },

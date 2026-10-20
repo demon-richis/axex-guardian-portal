@@ -5,7 +5,7 @@
   "functions": {
     "api/index.mjs": {
       "runtime": "nodejs22.x",
-      "includeFiles": ["dist/server/**/*", "dist/client/**/*"]
+      "includeFiles": "api/dist-server/**"
     }
   },
   "crons": [

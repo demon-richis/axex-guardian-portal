@@ -80,7 +80,8 @@ export async function notifyBotIntelligence(
   source: string,
 ): Promise<void> {
   const configuredUrl = process.env["BOT_WEBHOOK_URL"]?.trim();
-  const apiKey = process.env["AXEX_BOT_API_KEY"]?.trim();
+  const apiKey =
+    process.env["PORTAL_TO_BOT_KEY"]?.trim() || process.env["AXEX_BOT_API_KEY"]?.trim();
   if (!configuredUrl || !apiKey) return;
 
   try {

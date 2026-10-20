@@ -1,5 +1,3 @@
-import { access } from "node:fs/promises";
-
 let handlerPromise;
 async function getHandler() {
   handlerPromise ??= import("../dist/server/server.js").then((module) => module.default ?? module);
@@ -53,5 +51,3 @@ export default async function handler(request, response) {
     response.status(500).send("Internal Server Error");
   }
 }
-
-await access(new URL("../dist/server/server.js", import.meta.url));

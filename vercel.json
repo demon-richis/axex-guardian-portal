@@ -4,7 +4,7 @@
   "outputDirectory": "dist/client",
   "functions": {
     "api/index.mjs": {
-      "includeFiles": "dist/server/**"
+      "includeFiles": ["dist/server/**/*", "dist/client/**/*"]
     }
   },
   "crons": [
@@ -15,6 +15,7 @@
   ],
   "rewrites": [
     { "source": "/api/:path*", "destination": "/api?__axex_path=/api/:path*" },
+    { "source": "/", "destination": "/api?__axex_path=/" },
     { "source": "/:path*", "destination": "/api?__axex_path=/:path*" }
   ]
 }

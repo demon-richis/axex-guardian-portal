@@ -660,15 +660,7 @@ function VerifyPage() {
           <VerificationLoader stage={loadingStage} />
         ) : null}
         {oauthReturn && (phase === "loading" || busy) && (
-          <InlineVerificationStatus
-            label={
-              loadingStage === 0
-                ? "Checking your link..."
-                : loadingStage === 1
-                  ? "Checking your connection..."
-                  : "Loading the human check..."
-            }
-          />
+          <InlineVerificationStatus stage={loadingStage} />
         )}
         {phase !== "error" && phase !== "loading" && <Steps step={step} />}
 
@@ -942,18 +934,55 @@ const LOADING_STAGES = [
   ["Loading the human check", "Preparing the secure verification challenge."],
 ] as const;
 
-function InlineVerificationStatus({ label }: { label: string }) {
+function InlineVerificationStatus({ stage }: { stage: number }) {
+  const activeStage = Math.min(Math.max(stage, 0), LOADING_STAGES.length - 1);
+  const [title, description] = LOADING_STAGES[activeStage] ?? LOADING_STAGES[0];
+
   return (
     <div
       role="status"
       aria-live="polite"
-      className="flex items-center gap-3 rounded-xl border border-[var(--green)]/20 bg-[var(--surface)] px-4 py-3 text-sm text-muted-foreground"
+      className="rounded-2xl border border-[var(--surface-border-2)] bg-[var(--surface)] p-4"
     >
-      <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--green)]/25 bg-[var(--green-soft)]">
-        <span className="absolute inset-1 animate-spin rounded-full border-2 border-transparent border-t-[var(--green)]" />
-        <span className="text-[10px] font-bold text-[var(--green-text)]">Ax</span>
-      </span>
-      <span className="font-medium text-foreground">{label}</span>
+      <div className="flex items-center gap-3">
+        <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--green)]/25 bg-[var(--green-soft)]">
+          <span aria-hidden="true" className="absolute inset-1 animate-spin rounded-full border-2 border-transparent border-t-[var(--green)]" />
+          <span className="text-[10px] font-bold text-[var(--green-text)]">Ax</span>
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center justify-between gap-2">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--green-text)]">
+              Secure verification
+            </p>
+            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
+              Step {activeStage + 1} of {LOADING_STAGES.length}
+            </span>
+          </div>
+          <p className="mt-1 text-sm font-semibold text-foreground">{title}</p>
+        </div>
+      </div>
+      <p className="mt-3 pl-14 text-xs leading-5 text-muted-foreground">{description}</p>
+      <div
+        className="mt-4 flex gap-1.5 pl-14"
+        role="progressbar"
+        aria-label="Verification progress"
+        aria-valuemin={1}
+        aria-valuemax={LOADING_STAGES.length}
+        aria-valuenow={activeStage + 1}
+        aria-valuetext={`Step ${activeStage + 1} of ${LOADING_STAGES.length}: ${title}`}
+      >
+        {LOADING_STAGES.map(([stageTitle], index) => (
+          <span
+            key={stageTitle}
+            aria-hidden="true"
+            className={`h-1.5 flex-1 rounded-full transition-colors duration-300 ${
+              index <= activeStage
+                ? "bg-gradient-to-r from-[var(--red)] to-[var(--green)]"
+                : "bg-[var(--pill)]"
+            }`}
+          />
+        ))}
+      </div>
     </div>
   );
 }
@@ -999,7 +1028,15 @@ function VerificationLoader({ stage }: { stage: number }) {
             {`Step ${activeStage + 1} of ${LOADING_STAGES.length}`}
           </span>
         </div>
-        <div className="mb-5 flex gap-1.5" aria-hidden="true">
+        <div
+          className="mb-5 flex gap-1.5"
+          role="progressbar"
+          aria-label="Verification progress"
+          aria-valuemin={1}
+          aria-valuemax={LOADING_STAGES.length}
+          aria-valuenow={activeStage + 1}
+          aria-valuetext={`Step ${activeStage + 1} of ${LOADING_STAGES.length}: ${activeTitle}`}
+        >
           {LOADING_STAGES.map(([title], index) => (
             <span
               key={title}

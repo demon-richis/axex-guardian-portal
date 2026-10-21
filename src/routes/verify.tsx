@@ -942,41 +942,69 @@ function InlineVerificationStatus({ label }: { label: string }) {
     <div
       role="status"
       aria-live="polite"
-      className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"
+      className="flex items-center gap-3 rounded-xl border border-[var(--green)]/20 bg-[var(--surface)] px-4 py-3 text-sm text-muted-foreground"
     >
-      <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--green)]/20 border-t-[var(--green)]" />
-      {label}
+      <span className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-[var(--green)]/25 bg-[var(--green-soft)]">
+        <span className="absolute inset-1 animate-spin rounded-full border-2 border-transparent border-t-[var(--green)]" />
+        <span className="text-[10px] font-bold text-[var(--green-text)]">Ax</span>
+      </span>
+      <span className="font-medium text-foreground">{label}</span>
     </div>
   );
 }
 
 function VerificationLoader({ stage }: { stage: number }) {
   const activeStage = Math.min(Math.max(stage, 0), LOADING_STAGES.length - 1);
+  const [activeTitle, activeDescription] = LOADING_STAGES[activeStage] ?? LOADING_STAGES[0];
   return (
     <div
-      className="absolute inset-0 z-20 flex items-center justify-center bg-card px-6 py-8"
+      className="absolute inset-0 z-20 flex items-center justify-center bg-card/95 px-6 py-8 backdrop-blur-sm"
       role="status"
       aria-live="polite"
     >
       <div className="w-full max-w-[330px]">
-        <div className="mb-6 flex items-center justify-between">
-          <div>
-            <p className="text-sm font-bold text-foreground">Secure verification</p>
-            <p className="mt-1 text-[11px] text-muted-foreground">Preparing your verification</p>
+        <div className="mb-7 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--red)]/25 bg-gradient-to-br from-[var(--red-soft)] to-[var(--green-soft)] text-sm font-bold text-foreground">
+              Ax
+            </span>
+            <div>
+              <p className="text-sm font-bold text-foreground">Axex</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">Secure verification</p>
+            </div>
           </div>
-          <span className="text-[11px] text-muted-foreground">
-            {`Step ${activeStage + 1} of ${LOADING_STAGES.length}`}
+          <span className="rounded-full border border-[var(--green)]/25 bg-[var(--green-soft)] px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider text-[var(--green-text)]">
+            Secure
           </span>
         </div>
 
-        <div className="mb-5 h-1.5 overflow-hidden rounded-full bg-[var(--pill)]">
-          <motion.div
-            className="h-full rounded-full bg-gradient-to-r from-[var(--red)] via-[var(--amber)] to-[var(--green)]"
-            animate={{
-              width: `${Math.max(12, ((activeStage + 1) / LOADING_STAGES.length) * 100)}%`,
-            }}
-            transition={{ duration: 0.45, ease: "easeOut" }}
-          />
+        <div className="mb-6 flex flex-col items-center rounded-2xl border border-[var(--surface-border-2)] bg-[var(--surface)] px-4 py-5 text-center">
+          <div className="relative mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-[var(--green)]/20 bg-[var(--green-soft)]">
+            <span className="absolute inset-1 animate-spin rounded-full border-2 border-transparent border-t-[var(--green)]" />
+            <span className="absolute inset-2 rounded-full border border-[var(--red)]/15" />
+            <span className="text-sm font-bold text-foreground">Ax</span>
+          </div>
+          <p className="text-sm font-semibold text-foreground">{activeTitle}</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{activeDescription}</p>
+        </div>
+
+        <div className="mb-4 flex items-center justify-between">
+          <p className="text-[11px] font-semibold text-muted-foreground">Verification progress</p>
+          <span className="text-[11px] tabular-nums text-muted-foreground">
+            {`Step ${activeStage + 1} of ${LOADING_STAGES.length}`}
+          </span>
+        </div>
+        <div className="mb-5 flex gap-1.5" aria-hidden="true">
+          {LOADING_STAGES.map(([title], index) => (
+            <span
+              key={title}
+              className={`h-1.5 flex-1 rounded-full transition-colors duration-300 ${
+                index <= activeStage
+                  ? "bg-gradient-to-r from-[var(--red)] to-[var(--green)]"
+                  : "bg-[var(--pill)]"
+              }`}
+            />
+          ))}
         </div>
 
         <div className="space-y-2">
@@ -986,18 +1014,21 @@ function VerificationLoader({ stage }: { stage: number }) {
             return (
               <div
                 key={title}
-                className={`flex items-start gap-3 rounded-xl border px-3 py-3 transition-colors ${
+                aria-current={current ? "step" : undefined}
+                className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
                   current
                     ? "border-[var(--green)]/30 bg-[var(--green-soft)]"
-                    : "border-transparent bg-[var(--surface)] opacity-55"
+                    : complete
+                      ? "border-[var(--surface-border)] bg-[var(--surface)]"
+                      : "border-transparent bg-[var(--surface)] opacity-55"
                 }`}
               >
                 <span
-                  className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
+                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
                     complete
-                      ? "bg-[var(--green)]"
+                      ? "bg-[var(--green-soft)] text-[var(--green-text)]"
                       : current
-                        ? "border border-[var(--green)] text-[var(--green)]"
+                        ? "border border-[var(--green)]/50 text-[var(--green)]"
                         : "bg-[var(--pill)] text-muted-foreground"
                   }`}
                 >
@@ -1010,19 +1041,23 @@ function VerificationLoader({ stage }: { stage: number }) {
                   )}
                 </span>
                 <div className="min-w-0">
-                  <p className="text-xs font-semibold text-foreground">{title}</p>
-                  {current && (
-                    <p className="mt-1 text-[11px] leading-4 text-muted-foreground">
-                      {description}
-                    </p>
-                  )}
+                  <p
+                    className={`text-xs ${
+                      current
+                        ? "font-semibold text-foreground"
+                        : "font-medium text-muted-foreground"
+                    }`}
+                  >
+                    {title}
+                  </p>
+                  {current && <span className="sr-only">: {description}</span>}
                 </div>
               </div>
             );
           })}
         </div>
 
-        <p className="mt-5 text-center text-[11px] text-muted-foreground">
+        <p className="mt-5 text-center text-[11px] text-[var(--faint)]">
           This usually takes a few seconds. Please keep this tab open.
         </p>
       </div>

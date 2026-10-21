@@ -629,6 +629,16 @@ function VerifyPage() {
     [attemptKey, attempts, fail, runIpCheck, submitAttempt, token],
   );
 
+  const handleTurnstileError = useCallback(
+    (code: string) => {
+      console.log(`[verify] Turnstile error: ${code}`);
+      track(token, "turnstile_error", code);
+      setErrorKind("captchaUnavailable");
+      setPhase("error");
+    },
+    [token],
+  );
+
   const step =
     phase === "auth" || phase === "vpn" || phase === "loading"
       ? 0
@@ -821,12 +831,7 @@ function VerifyPage() {
                 siteKey={turnstileSiteKey}
                 demoMode={demoMode}
                 onSubmit={submitAnswer}
-                onTurnstileError={(code) => {
-                  console.log(`[verify] Turnstile error: ${code}`);
-                  track(token, "turnstile_error", code);
-                  setErrorKind("captchaUnavailable");
-                  setPhase("error");
-                }}
+                onTurnstileError={handleTurnstileError}
               />
             </motion.div>
           )}
@@ -1208,7 +1213,7 @@ function Captcha({
   onSubmit: (turnstileToken: string, clickMs: number, honeypotTriggered?: boolean) => Promise<void>;
   onTurnstileError?: (code: string) => void;
 }) {
-  const [honeypotTriggered, setHoneypotTriggered] = useState(false);
+  const honeypotTriggered = useRef(false);
   const [challengeExpired, setChallengeExpired] = useState(false);
   const widgetRef = useRef<HTMLDivElement>(null);
   const widgetId = useRef<string | null>(null);
@@ -1233,7 +1238,7 @@ function Captcha({
             if (done.current) return;
             done.current = true;
             setChallengeExpired(false);
-            void onSubmit(token, Date.now() - startedAt.current, honeypotTriggered);
+            void onSubmit(token, Date.now() - startedAt.current, honeypotTriggered.current);
           },
           "expired-callback": () => {
             if (done.current) return;
@@ -1264,7 +1269,7 @@ function Captcha({
       widgetId.current = null;
       done.current = false;
     };
-  }, [challenge.turnstileCData, demoMode, honeypotTriggered, onSubmit, onTurnstileError, siteKey]);
+  }, [challenge.turnstileCData, demoMode, onSubmit, onTurnstileError, siteKey]);
 
   return (
     <motion.div className="space-y-4">
@@ -1279,8 +1284,12 @@ function Captcha({
           type="url"
           tabIndex={-1}
           autoComplete="off"
-          onFocus={() => setHoneypotTriggered(true)}
-          onChange={() => setHoneypotTriggered(true)}
+          onFocus={() => {
+            honeypotTriggered.current = true;
+          }}
+          onChange={() => {
+            honeypotTriggered.current = true;
+          }}
         />
         <label htmlFor="company_name">Company</label>
         <input
@@ -1289,10 +1298,20 @@ function Captcha({
           type="text"
           tabIndex={-1}
           autoComplete="organization"
-          onFocus={() => setHoneypotTriggered(true)}
-          onChange={() => setHoneypotTriggered(true)}
+          onFocus={() => {
+            honeypotTriggered.current = true;
+          }}
+          onChange={() => {
+            honeypotTriggered.current = true;
+          }}
         />
-        <button type="button" tabIndex={-1} onClick={() => setHoneypotTriggered(true)}>
+        <button
+          type="button"
+          tabIndex={-1}
+          onClick={() => {
+            honeypotTriggered.current = true;
+          }}
+        >
           Skip verification
         </button>
       </div>
@@ -1330,7 +1349,7 @@ function Captcha({
         </p>
         <p className="mt-1.5 text-sm text-foreground">Complete the security check to continue.</p>
         {demoMode || !siteKey ? (
-          <PrimaryButton onClick={() => void onSubmit("dev-bypass", 0, honeypotTriggered)}>
+          <PrimaryButton onClick={() => void onSubmit("dev-bypass", 0, honeypotTriggered.current)}>
             {demoMode ? "Complete demo verification" : "Complete local verification"}
           </PrimaryButton>
         ) : (

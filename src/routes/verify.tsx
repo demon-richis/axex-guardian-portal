@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { mapTurnstileError, shouldSubmitTurnstileToken } from "../lib/turnstile-client";
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
@@ -7,6 +8,7 @@ export const Route = createFileRoute("/verify")({
   validateSearch: z.object({
     token: z.string().optional(),
     auth: z.coerce.string().optional(),
+    path: z.coerce.string().optional(),
     error: z.string().optional(),
     demo: z.coerce.string().optional(),
   }),
@@ -61,6 +63,10 @@ type ErrorKind =
   | "auth"
   | "network"
   | "captchaUnavailable"
+  | "turnstileRateLimited"
+  | "turnstileInvalidRequest"
+  | "turnstileIdentityMismatch"
+  | "turnstileExpired"
   | "bot"
   | "generic";
 type Phase = "loading" | "auth" | "vpn" | "captcha" | "cooldown" | "pending" | "done" | "error";
@@ -82,6 +88,22 @@ const ERRORS: Record<ErrorKind, [string, string]> = {
     "Verification service unavailable",
     "The secure challenge provider is temporarily unavailable. No attempt was used; please try again shortly.",
   ],
+  turnstileRateLimited: [
+    "Too many requests",
+    "Please wait a moment before trying the verification check again.",
+  ],
+  turnstileInvalidRequest: [
+    "Security check was blocked",
+    "The challenge request was invalid. Please refresh and try again.",
+  ],
+  turnstileIdentityMismatch: [
+    "Session mismatch",
+    "Your Discord session changed during verification. Please restart the check and sign back in.",
+  ],
+  turnstileExpired: [
+    "Challenge expired",
+    "The security challenge expired; please complete it again.",
+  ],
   bot: [
     "Discord update is taking longer than usual",
     "Your verification was accepted, but Discord has not confirmed the role update yet. Contact a moderator with your reference code if the role does not appear shortly.",
@@ -89,12 +111,12 @@ const ERRORS: Record<ErrorKind, [string, string]> = {
   generic: ["Something went wrong", "Please try again or contact server staff."],
 };
 
-function track(token: string, event: Parameters<typeof telemetryEvent>[1]): void {
+function track(token: string, event: Parameters<typeof telemetryEvent>[1], detail?: string): void {
   if (!token || typeof navigator === "undefined") return;
-  void telemetryEvent(token, event);
+  void telemetryEvent(token, event, detail);
 }
 
-async function telemetryEvent(token: string, event: string): Promise<void> {
+async function telemetryEvent(token: string, event: string, detail?: string): Promise<void> {
   try {
     await fetch("/api/telemetry", {
       method: "POST",
@@ -102,6 +124,7 @@ async function telemetryEvent(token: string, event: string): Promise<void> {
       body: JSON.stringify({
         token,
         event,
+        detail,
         device: window.matchMedia("(max-width: 640px)").matches ? "mobile" : "desktop",
       }),
       keepalive: true,
@@ -221,6 +244,17 @@ function VerifyPage() {
     }, 1800);
     return () => window.clearInterval(id);
   }, [phase]);
+
+  useEffect(() => {
+    if (!(auth === "1" || auth === "true" || auth === "yes")) return;
+    const current = new URLSearchParams(window.location.search);
+    current.delete("auth");
+    current.delete("path");
+    const nextUrl = `${window.location.pathname}${current.size ? `?${current.toString()}` : ""}${window.location.hash}`;
+    if (window.location.pathname + window.location.search !== nextUrl) {
+      window.history.replaceState(window.history.state, "", nextUrl);
+    }
+  }, [auth]);
 
   const fail = useCallback((k: ErrorKind) => {
     console.error("[verify] Transitioning to error:", k);
@@ -435,6 +469,10 @@ function VerifyPage() {
         console.log("[verify] Demo result accepted locally");
         return { success: true, passed: turnstileToken === "dev-bypass" };
       }
+      if (!shouldSubmitTurnstileToken(turnstileToken)) {
+        console.log("[verify] Ignored empty Turnstile token before callback submission");
+        return null;
+      }
       const u = info?.discordUser;
       if (!challenge?.challengeId) return null;
       const response = await fetchVerification("/api/callback", {
@@ -470,6 +508,7 @@ function VerifyPage() {
         failureReason?: string | null;
         locked?: boolean;
         error?: string;
+        retryAfterSeconds?: number;
       } | null;
     },
     [challenge, demoMode, info, token],
@@ -487,31 +526,63 @@ function VerifyPage() {
         } else {
           setPhase("pending");
         }
-      } else {
-        console.log("[verify] Challenge proof was not accepted");
-        track(
-          token,
-          result?.error === "network_check_unavailable" ? "network_unavailable" : "callback_failed",
-        );
-        const serverAttempts = result?.attempts ?? attempts;
-        if (result?.success && serverAttempts > 0) {
-          setAttempts(serverAttempts);
-          writeAttemptCount(attemptKey, serverAttempts);
-        }
-        if (result?.cooldownUntil && (result.attempts ?? 0) < 3) {
-          setCooldownUntil(result.cooldownUntil);
-          setFailureReason(result.failureReason ?? "Verification failed");
-          setPhase("cooldown");
-        } else if (result?.locked || serverAttempts >= 3) {
-          fail("lockout");
-        } else if (result?.error === "turnstile_unavailable") {
-          fail("captchaUnavailable");
-        } else {
-          fail(result?.error === "network_check_unavailable" ? "network" : "generic");
-        }
+        return;
       }
+
+      console.log("[verify] Challenge proof was not accepted");
+      track(
+        token,
+        result?.error === "network_check_unavailable" ? "network_unavailable" : "callback_failed",
+      );
+
+      const mappedError = mapTurnstileError(result?.error, result?.retryAfterSeconds);
+      const serverAttempts = result?.attempts ?? attempts;
+      if (result?.success && serverAttempts > 0) {
+        setAttempts(serverAttempts);
+        writeAttemptCount(attemptKey, serverAttempts);
+      }
+      if (result?.cooldownUntil && (result.attempts ?? 0) < 3) {
+        setCooldownUntil(result.cooldownUntil);
+        setFailureReason(result.failureReason ?? "Verification failed");
+        setPhase("cooldown");
+        return;
+      }
+      if (result?.locked || serverAttempts >= 3) {
+        fail("lockout");
+        return;
+      }
+      if (result?.error === "turnstile_unavailable") {
+        fail("captchaUnavailable");
+        return;
+      }
+      if (result?.error === "invalid_or_expired_challenge") {
+        console.log("[verify] Reloading challenge after expiry or mismatch");
+        void runIpCheck();
+        return;
+      }
+      if (mappedError.kind === "turnstileRateLimited") {
+        fail("turnstileRateLimited");
+        return;
+      }
+      if (mappedError.kind === "turnstileInvalidRequest") {
+        fail("turnstileInvalidRequest");
+        return;
+      }
+      if (mappedError.kind === "turnstileIdentityMismatch") {
+        fail("turnstileIdentityMismatch");
+        return;
+      }
+      if (mappedError.kind === "captchaUnavailable") {
+        fail("captchaUnavailable");
+        return;
+      }
+      if (result?.error === "network_check_unavailable") {
+        fail("network");
+        return;
+      }
+      fail("generic");
     },
-    [attemptKey, attempts, fail, submitAttempt, token],
+    [attemptKey, attempts, fail, runIpCheck, submitAttempt, token],
   );
 
   const step =
@@ -543,7 +614,19 @@ function VerifyPage() {
                 title={ERRORS[errorKind][0]}
                 desc={ERRORS[errorKind][1]}
                 referenceId={info?.referenceId ?? null}
-                onRetry={errorKind === "network" ? runIpCheck : undefined}
+                onRetry={
+                  errorKind === "network" ||
+                  errorKind === "captchaUnavailable" ||
+                  errorKind === "turnstileRateLimited" ||
+                  errorKind === "turnstileInvalidRequest" ||
+                  errorKind === "turnstileIdentityMismatch" ||
+                  errorKind === "turnstileExpired"
+                    ? () => {
+                        setPhase("captcha");
+                        void runIpCheck();
+                      }
+                    : undefined
+                }
               />
               {errorKind === "bot" && info?.botError && (
                 <p className="mt-3 rounded-lg border border-border/70 bg-background/30 px-3 py-2 text-left text-[11px] text-muted-foreground">
@@ -581,9 +664,7 @@ function VerifyPage() {
                 </p>
               </div>
               {info?.referenceId && (
-                <p className="text-xs text-muted-foreground">
-                  Reference: <strong className="text-foreground">{info.referenceId}</strong>
-                </p>
+                <ReferenceId referenceId={info.referenceId} className="justify-center" />
               )}
               {cooldownSeconds === 0 ? (
                 <PrimaryButton onClick={() => window.location.reload()}>
@@ -685,6 +766,12 @@ function VerifyPage() {
                 siteKey={turnstileSiteKey}
                 demoMode={demoMode}
                 onSubmit={submitAnswer}
+                onTurnstileError={(code) => {
+                  console.log(`[verify] Turnstile error: ${code}`);
+                  track(token, "turnstile_error", code);
+                  setErrorKind("captchaUnavailable");
+                  setPhase("error");
+                }}
               />
             </motion.div>
           )}
@@ -699,9 +786,7 @@ function VerifyPage() {
                 We are notifying Discord now. This usually takes a few seconds. Keep this tab open.
               </p>
               {info.referenceId && (
-                <p className="text-xs text-muted-foreground">
-                  Reference <strong className="text-foreground">{info.referenceId}</strong>
-                </p>
+                <ReferenceId referenceId={info.referenceId} className="justify-center" />
               )}
             </motion.div>
           )}
@@ -745,9 +830,7 @@ function VerifyPage() {
                 Access has been granted to your account.
               </p>
               {info.referenceId && (
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Reference: <strong className="text-foreground">{info.referenceId}</strong>
-                </p>
+                <ReferenceId referenceId={info.referenceId} className="mt-2 justify-center" />
               )}
               <div className="mt-5 flex w-full gap-2">
                 <a
@@ -1019,6 +1102,7 @@ function Captcha({
   siteKey,
   demoMode,
   onSubmit,
+  onTurnstileError,
 }: {
   info: TokenInfo;
   user: NonNullable<TokenInfo["discordUser"]>;
@@ -1027,8 +1111,10 @@ function Captcha({
   siteKey: string;
   demoMode: boolean;
   onSubmit: (turnstileToken: string, clickMs: number, honeypotTriggered?: boolean) => Promise<void>;
+  onTurnstileError?: (code: string) => void;
 }) {
   const [honeypotTriggered, setHoneypotTriggered] = useState(false);
+  const [challengeExpired, setChallengeExpired] = useState(false);
   const widgetRef = useRef<HTMLDivElement>(null);
   const widgetId = useRef<string | null>(null);
   const startedAt = useRef(Date.now());
@@ -1043,6 +1129,7 @@ function Captcha({
     type TurnstileApi = {
       render: (element: HTMLElement, options: Record<string, unknown>) => string;
       remove?: (id: string) => void;
+      reset?: (id?: string) => void;
     };
     const render = () => {
       const turnstile = (window as Window & { turnstile?: TurnstileApi }).turnstile;
@@ -1054,17 +1141,23 @@ function Captcha({
         callback: (token: string) => {
           if (done.current) return;
           done.current = true;
+          setChallengeExpired(false);
           void onSubmit(token, Date.now() - startedAt.current, honeypotTriggered);
         },
         "expired-callback": () => {
           if (done.current) return;
-          done.current = true;
-          void onSubmit("", Date.now() - startedAt.current, honeypotTriggered);
+          setChallengeExpired(true);
+          const turnstileApi = (window as Window & { turnstile?: TurnstileApi }).turnstile;
+          if (widgetId.current && turnstileApi?.reset) {
+            turnstileApi.reset(widgetId.current);
+          }
         },
-        "error-callback": () => {
+        "error-callback": (code: string) => {
           if (done.current) return;
           done.current = true;
-          void onSubmit("", Date.now() - startedAt.current, honeypotTriggered);
+          if (onTurnstileError) {
+            onTurnstileError(code);
+          }
         },
       });
     };
@@ -1087,8 +1180,9 @@ function Captcha({
         (window as Window & { turnstile?: TurnstileApi }).turnstile?.remove?.(widgetId.current);
       }
       widgetId.current = null;
+      done.current = false;
     };
-  }, [challenge.turnstileCData, demoMode, honeypotTriggered, onSubmit, siteKey]);
+  }, [challenge.turnstileCData, demoMode, honeypotTriggered, onSubmit, onTurnstileError, siteKey]);
 
   return (
     <motion.div className="space-y-4">
@@ -1160,6 +1254,11 @@ function Captcha({
         ) : (
           <div ref={widgetRef} className="mt-3 flex min-h-[65px] justify-center" />
         )}
+        {challengeExpired && (
+          <p className="mt-3 text-center text-xs text-[var(--amber)]">
+            Challenge expired, please complete it again.
+          </p>
+        )}
       </div>
       <p className="text-center text-[11px] text-[var(--faint)]">Verifying for {info.guildName}</p>
     </motion.div>
@@ -1198,18 +1297,10 @@ function ErrorAlert({
         <p className="text-sm font-semibold text-foreground">{title}</p>
         <p className="mt-1 text-xs text-muted-foreground">{desc}</p>
         {referenceId && (
-          <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-border/70 bg-background/30 px-3 py-2 text-xs text-muted-foreground">
-            <span>
-              Reference <strong className="text-foreground">{referenceId}</strong>
-            </span>
-            <button
-              type="button"
-              onClick={() => void navigator.clipboard?.writeText(referenceId)}
-              className="font-semibold text-[var(--green-text)] underline underline-offset-2"
-            >
-              Copy
-            </button>
-          </div>
+          <ReferenceId
+            referenceId={referenceId}
+            className="mt-3 w-full justify-between rounded-lg border border-border/70 bg-background/30 px-3 py-2"
+          />
         )}
         {onRetry && (
           <button
@@ -1227,6 +1318,67 @@ function ErrorAlert({
           Having trouble?
         </a>
       </div>
+    </div>
+  );
+}
+
+async function copyReferenceId(referenceId: string): Promise<boolean> {
+  try {
+    if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(referenceId);
+      return true;
+    }
+  } catch {
+    // Fall back to execCommand if the clipboard API is unavailable or rejected.
+  }
+
+  let input: HTMLTextAreaElement | null = null;
+  try {
+    input = document.createElement("textarea");
+    input.value = referenceId;
+    input.readOnly = true;
+    input.className = "fixed -left-[10000px] top-0";
+    document.body.appendChild(input);
+    input.select();
+    return document.execCommand("copy");
+  } catch {
+    return false;
+  } finally {
+    input?.remove();
+  }
+}
+
+function ReferenceId({ referenceId, className = "" }: { referenceId: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<number | null>(null);
+
+  useEffect(
+    () => () => {
+      if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    },
+    [],
+  );
+
+  const copy = async () => {
+    if (!(await copyReferenceId(referenceId))) return;
+    setCopied(true);
+    if (resetTimer.current !== null) window.clearTimeout(resetTimer.current);
+    resetTimer.current = window.setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className={`flex flex-wrap items-center gap-2 text-xs text-muted-foreground ${className}`}>
+      <span className="min-w-0 break-all">
+        Reference: <strong className="min-w-0 break-all text-foreground">{referenceId}</strong>
+      </span>
+      <button
+        type="button"
+        aria-label={`Copy reference ID ${referenceId}`}
+        onClick={() => void copy()}
+        className="min-h-11 shrink-0 rounded-md px-2 font-semibold text-[var(--green-text)] underline underline-offset-2"
+      >
+        {copied ? "Copied" : "Copy"}
+      </button>
     </div>
   );
 }

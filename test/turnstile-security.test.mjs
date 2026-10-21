@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mapTurnstileError, shouldSubmitTurnstileToken } from "../src/lib/turnstile-client.ts";
 import { turnstileContext, verifyTurnstile } from "../src/lib/turnstile.server.ts";
 
 const context = {
@@ -83,4 +84,37 @@ test("missing Turnstile response is invalid before contacting the provider", asy
   });
   assert.deepEqual(result, { ok: false, error: "turnstile_invalid" });
   assert.equal(contacted, false);
+});
+
+test("mapTurnstileError converts server error codes into user-facing states", () => {
+  assert.deepEqual(mapTurnstileError("invalid_request"), {
+    kind: "turnstileInvalidRequest",
+    title: "Security check was blocked",
+    description: "The challenge request was invalid. Please refresh and try again.",
+  });
+  assert.deepEqual(mapTurnstileError("rate_limited", 8), {
+    kind: "turnstileRateLimited",
+    title: "Too many requests",
+    description: "Please wait 8 seconds before trying again.",
+    retryAfterSeconds: 8,
+  });
+  assert.deepEqual(mapTurnstileError("verification_unavailable"), {
+    kind: "captchaUnavailable",
+    title: "Verification service unavailable",
+    description:
+      "The secure challenge provider is temporarily unavailable. No attempt was used; please try again shortly.",
+  });
+  assert.deepEqual(mapTurnstileError("invalid_or_expired_challenge"), {
+    kind: "turnstileExpired",
+    title: "Challenge expired",
+    description: "The security challenge expired; please complete it again.",
+  });
+});
+
+test("empty Turnstile tokens are never submitted for server verification", () => {
+  assert.equal(shouldSubmitTurnstileToken(""), false);
+  assert.equal(shouldSubmitTurnstileToken("   "), false);
+  assert.equal(shouldSubmitTurnstileToken("token"), true);
+  assert.equal(shouldSubmitTurnstileToken(null), false);
+  assert.equal(shouldSubmitTurnstileToken(undefined), false);
 });

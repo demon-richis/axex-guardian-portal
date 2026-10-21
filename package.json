@@ -12,6 +12,7 @@
     "start": "npm run build && node server.mjs",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
+    "pretest": "npm run build",
     "test": "node --experimental-strip-types --test test/*.test.mjs",
     "check": "npm run lint && npx tsc --noEmit",
     "build:dev": "vite build --mode development",

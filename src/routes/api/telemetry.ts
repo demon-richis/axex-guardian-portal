@@ -18,8 +18,10 @@ const Body = z.object({
     "callback_failed",
     "verification_completed",
     "verification_error",
+    "turnstile_error",
   ]),
   device: z.enum(["mobile", "desktop", "unknown"]).optional(),
+  detail: z.string().max(200).optional(),
 });
 
 const intelligenceEvents: Record<string, string> = {
@@ -35,6 +37,7 @@ const intelligenceEvents: Record<string, string> = {
   callback_failed: "CALLBACK_FAILED",
   verification_completed: "PORTAL_COMPLETED",
   verification_error: "PORTAL_ERROR",
+  turnstile_error: "TURNSTILE_ERROR",
 };
 
 export const Route = createFileRoute("/api/telemetry")({
@@ -118,7 +121,11 @@ export const Route = createFileRoute("/api/telemetry")({
             guildId: row.guildId,
             eventType: `UX_${parsed.data.event.toUpperCase()}`,
             severity: "info",
-            metadata: { device: parsed.data.device ?? "unknown", referenceId: row.referenceId },
+            metadata: {
+              device: parsed.data.device ?? "unknown",
+              referenceId: row.referenceId,
+              ...(parsed.data.detail ? { detail: parsed.data.detail } : {}),
+            },
           });
 
           const eventType = intelligenceEvents[parsed.data.event];
@@ -132,6 +139,7 @@ export const Route = createFileRoute("/api/telemetry")({
                 device: parsed.data.device ?? "unknown",
                 referenceId: row.referenceId,
                 source: "guardian_portal",
+                ...(parsed.data.detail ? { detail: parsed.data.detail } : {}),
               },
             });
           }

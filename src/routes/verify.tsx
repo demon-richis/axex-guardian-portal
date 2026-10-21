@@ -24,6 +24,7 @@ export const Route = createFileRoute("/verify")({
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary" },
     ],
+    links: [{ rel: "preconnect", href: "https://challenges.cloudflare.com" }],
   }),
   component: VerifyPage,
 });
@@ -135,6 +136,61 @@ async function telemetryEvent(token: string, event: string, detail?: string): Pr
 }
 
 const VERIFICATION_REQUEST_TIMEOUT_MS = 25_000;
+const TURNSTILE_SCRIPT_SRC =
+  "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+
+type TurnstileApi = {
+  render: (element: HTMLElement, options: Record<string, unknown>) => string;
+  remove?: (id: string) => void;
+  reset?: (id?: string) => void;
+};
+
+type TurnstileWindow = Window & { turnstile?: TurnstileApi };
+
+let turnstileScriptPromise: Promise<TurnstileApi> | null = null;
+
+function loadTurnstileScript(): Promise<TurnstileApi> {
+  const turnstileWindow = window as TurnstileWindow;
+  if (turnstileWindow.turnstile) return Promise.resolve(turnstileWindow.turnstile);
+  if (turnstileScriptPromise) return turnstileScriptPromise;
+
+  turnstileScriptPromise = new Promise<TurnstileApi>((resolve, reject) => {
+    const existing = document.querySelector<HTMLScriptElement>(
+      'script[src^="https://challenges.cloudflare.com/turnstile/"]',
+    );
+    const script = existing ?? document.createElement("script");
+    const onLoad = () => {
+      const api = turnstileWindow.turnstile;
+      if (!api) {
+        reject(new Error("Turnstile script loaded without exposing its API"));
+        return;
+      }
+      resolve(api);
+    };
+    const onError = () => reject(new Error("Turnstile script failed to load"));
+
+    script.addEventListener("load", onLoad, { once: true });
+    script.addEventListener("error", onError, { once: true });
+    if (!existing) {
+      script.src = TURNSTILE_SCRIPT_SRC;
+      script.async = true;
+      script.defer = true;
+      const nonceSource = document.querySelector<HTMLScriptElement>("script[nonce]");
+      if (nonceSource?.nonce) script.nonce = nonceSource.nonce;
+      document.head.appendChild(script);
+    }
+  }).catch((error: unknown) => {
+    document
+      .querySelector<HTMLScriptElement>(
+        'script[src^="https://challenges.cloudflare.com/turnstile/"]',
+      )
+      ?.remove();
+    turnstileScriptPromise = null;
+    throw error;
+  });
+
+  return turnstileScriptPromise;
+}
 
 async function fetchVerification(
   input: RequestInfo | URL,
@@ -187,6 +243,7 @@ function formatCountdown(seconds: number | null): string {
 function VerifyPage() {
   const { token = "", auth, error, demo } = Route.useSearch();
   const demoMode = demo === "1";
+  const oauthReturn = Boolean(auth);
   const effectiveToken = demoMode ? "demo-local" : token;
   const [phase, setPhase] = useState<Phase>("loading");
   const [errorKind, setErrorKind] = useState<ErrorKind>("generic");
@@ -202,6 +259,12 @@ function VerifyPage() {
   const [turnstileSiteKey, setTurnstileSiteKey] = useState("");
 
   const attemptKey = `axex:verify-attempts:${effectiveToken}`;
+
+  useEffect(() => {
+    void loadTurnstileScript().catch((loadError: unknown) => {
+      console.error("[verify] Could not preload Turnstile:", loadError);
+    });
+  }, []);
 
   useEffect(() => {
     if (!token && !demoMode) return;
@@ -236,26 +299,6 @@ function VerifyPage() {
     console.log("[verify] Phase:", phase, { busy, hasUser: Boolean(info?.discordUser) });
   }, [busy, info?.discordUser, phase]);
 
-  useEffect(() => {
-    if (phase !== "loading") return;
-    setLoadingStage(0);
-    const id = window.setInterval(() => {
-      setLoadingStage((current) => Math.min(current + 1, 4));
-    }, 1800);
-    return () => window.clearInterval(id);
-  }, [phase]);
-
-  useEffect(() => {
-    if (!(auth === "1" || auth === "true" || auth === "yes")) return;
-    const current = new URLSearchParams(window.location.search);
-    current.delete("auth");
-    current.delete("path");
-    const nextUrl = `${window.location.pathname}${current.size ? `?${current.toString()}` : ""}${window.location.hash}`;
-    if (window.location.pathname + window.location.search !== nextUrl) {
-      window.history.replaceState(window.history.state, "", nextUrl);
-    }
-  }, [auth]);
-
   const fail = useCallback((k: ErrorKind) => {
     console.error("[verify] Transitioning to error:", k);
     setErrorKind(k);
@@ -265,6 +308,7 @@ function VerifyPage() {
   const runIpCheck = useCallback(
     async (signal?: AbortSignal) => {
       console.log("[verify] Step 2: Starting IP check");
+      setLoadingStage(1);
       setBusy(true);
       try {
         const response = await fetch(`/api/check-ip?token=${encodeURIComponent(token)}`, {
@@ -288,6 +332,7 @@ function VerifyPage() {
           setPhase("vpn");
         } else if (result.status === "clear") {
           track(token, "network_clear");
+          setLoadingStage(2);
           const challengeResponse = await fetchVerification("/api/challenge", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -350,19 +395,19 @@ function VerifyPage() {
           createdAt: "2018-01-01T00:00:00.000Z",
         },
       });
-      console.log("[verify] Demo identity loaded; showing Step 1 after preparation delay");
-      window.setTimeout(() => {
-        setPhase("auth");
-      }, 9000);
-      return;
+      console.log("[verify] Demo identity loaded; showing Step 1 after brief preparation");
+      const id = window.setTimeout(() => setPhase("auth"), 400);
+      return () => window.clearTimeout(id);
     }
     if (!token) return fail("invalid");
     const controller = new AbortController();
     let active = true;
+    const minimumPreparation = oauthReturn
+      ? Promise.resolve()
+      : new Promise<void>((resolve) => window.setTimeout(resolve, 400));
     (async () => {
       try {
         console.log("[verify] Validating verification token");
-        const minimumPreparation = new Promise<void>((resolve) => window.setTimeout(resolve, 9000));
         const res = await fetch(`/api/verify/${encodeURIComponent(token)}`);
         console.log("[verify] Token validation response:", res.status);
         if (!res.ok) throw new Error(`Token validation failed with status ${res.status}`);
@@ -408,7 +453,6 @@ function VerifyPage() {
         if (error) return fail(error === "auth" ? "auth" : "generic");
         if (auth && data.discordUser) {
           console.log("[verify] OAuth complete: identity found; moving from Step 1 to Step 2");
-          console.log("[verify] Keeping TanStack-managed URL state intact");
           await runIpCheck(controller.signal);
         } else if (auth) {
           console.error("[verify] OAuth completed but token has no stored Discord identity");
@@ -428,7 +472,7 @@ function VerifyPage() {
       controller.abort();
       console.log("[verify] Initialization cancelled or component unmounted");
     };
-  }, [attemptKey, token, auth, error, demoMode, fail, runIpCheck]);
+  }, [attemptKey, token, auth, error, demoMode, fail, oauthReturn, runIpCheck]);
 
   useEffect(() => {
     if (phase !== "pending" || demoMode || !token) return;
@@ -602,9 +646,20 @@ function VerifyPage() {
       <div className="pointer-events-none absolute -bottom-40 -right-40 h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle,var(--green)_0%,transparent_70%)] opacity-[0.06]" />
 
       <CardShell phase={phase}>
-        {phase === "loading" || busy ? (
-          <VerificationLoader stage={busy ? 2 : loadingStage} networkCheck={busy} />
+        {!oauthReturn && (phase === "loading" || busy) ? (
+          <VerificationLoader stage={loadingStage} />
         ) : null}
+        {oauthReturn && (phase === "loading" || busy) && (
+          <InlineVerificationStatus
+            label={
+              loadingStage === 0
+                ? "Checking your link..."
+                : loadingStage === 1
+                  ? "Checking your connection..."
+                  : "Loading the human check..."
+            }
+          />
+        )}
         {phase !== "error" && phase !== "loading" && <Steps step={step} />}
 
         <AnimatePresence mode="wait">
@@ -877,20 +932,25 @@ function CardShell({ children, phase }: { children: React.ReactNode; phase: Phas
 }
 
 const LOADING_STAGES = [
-  [
-    "Validating verification link",
-    "Confirming that this link is valid and belongs to this server.",
-  ],
-  [
-    "Preparing Discord sign-in",
-    "Loading the Discord identity check. Your password stays with Discord.",
-  ],
-  ["Checking network reputation", "Checking for VPN, proxy, or hosting connections."],
-  ["Preparing the human check", "Loading one short question to confirm you are human."],
-  ["Preparing access confirmation", "Getting the final verification result ready for the server."],
+  ["Checking your link", "Confirming that this link is valid and belongs to this server."],
+  ["Checking your network", "Checking for VPN, proxy, or hosting connections."],
+  ["Loading the human check", "Preparing the secure verification challenge."],
 ] as const;
 
-function VerificationLoader({ stage, networkCheck }: { stage: number; networkCheck: boolean }) {
+function InlineVerificationStatus({ label }: { label: string }) {
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground"
+    >
+      <span className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--green)]/20 border-t-[var(--green)]" />
+      {label}
+    </div>
+  );
+}
+
+function VerificationLoader({ stage }: { stage: number }) {
   const activeStage = Math.min(Math.max(stage, 0), LOADING_STAGES.length - 1);
   return (
     <div
@@ -905,7 +965,7 @@ function VerificationLoader({ stage, networkCheck }: { stage: number; networkChe
             <p className="mt-1 text-[11px] text-muted-foreground">Preparing your verification</p>
           </div>
           <span className="text-[11px] text-muted-foreground">
-            {networkCheck ? "Checking" : `Step ${activeStage + 1} of 5`}
+            {`Step ${activeStage + 1} of ${LOADING_STAGES.length}`}
           </span>
         </div>
 
@@ -921,7 +981,7 @@ function VerificationLoader({ stage, networkCheck }: { stage: number; networkChe
 
         <div className="space-y-2">
           {LOADING_STAGES.map(([title, description], index) => {
-            const complete = index < activeStage && !networkCheck;
+            const complete = index < activeStage;
             const current = index === activeStage;
             return (
               <div
@@ -1126,58 +1186,45 @@ function Captcha({
 
   useEffect(() => {
     if (demoMode || !siteKey || !widgetRef.current) return;
-    type TurnstileApi = {
-      render: (element: HTMLElement, options: Record<string, unknown>) => string;
-      remove?: (id: string) => void;
-      reset?: (id?: string) => void;
-    };
-    const render = () => {
-      const turnstile = (window as Window & { turnstile?: TurnstileApi }).turnstile;
-      if (!turnstile || !widgetRef.current || done.current) return;
-      widgetId.current = turnstile.render(widgetRef.current, {
-        sitekey: siteKey,
-        action: "axex_verify",
-        cData: challenge.turnstileCData,
-        callback: (token: string) => {
-          if (done.current) return;
-          done.current = true;
-          setChallengeExpired(false);
-          void onSubmit(token, Date.now() - startedAt.current, honeypotTriggered);
-        },
-        "expired-callback": () => {
-          if (done.current) return;
-          setChallengeExpired(true);
-          const turnstileApi = (window as Window & { turnstile?: TurnstileApi }).turnstile;
-          if (widgetId.current && turnstileApi?.reset) {
-            turnstileApi.reset(widgetId.current);
-          }
-        },
-        "error-callback": (code: string) => {
-          if (done.current) return;
-          done.current = true;
-          if (onTurnstileError) {
-            onTurnstileError(code);
-          }
-        },
+    let active = true;
+    void loadTurnstileScript()
+      .then((turnstile) => {
+        if (!active || !widgetRef.current || done.current) return;
+        widgetId.current = turnstile.render(widgetRef.current, {
+          sitekey: siteKey,
+          action: "axex_verify",
+          cData: challenge.turnstileCData,
+          callback: (token: string) => {
+            if (done.current) return;
+            done.current = true;
+            setChallengeExpired(false);
+            void onSubmit(token, Date.now() - startedAt.current, honeypotTriggered);
+          },
+          "expired-callback": () => {
+            if (done.current) return;
+            setChallengeExpired(true);
+            if (widgetId.current && turnstile.reset) {
+              turnstile.reset(widgetId.current);
+            }
+          },
+          "error-callback": (code: string) => {
+            if (done.current) return;
+            done.current = true;
+            onTurnstileError?.(code);
+          },
+        });
+      })
+      .catch((loadError: unknown) => {
+        if (!active) return;
+        console.error("[verify] Could not initialize Turnstile:", loadError);
+        onTurnstileError?.("script_load_failed");
       });
-    };
-    const existing = document.querySelector<HTMLScriptElement>(
-      'script[src^="https://challenges.cloudflare.com/turnstile/"]',
-    );
-    if (existing) {
-      if ((window as Window & { turnstile?: TurnstileApi }).turnstile) render();
-      else existing.addEventListener("load", render, { once: true });
-    } else {
-      const script = document.createElement("script");
-      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-      script.async = true;
-      script.defer = true;
-      script.addEventListener("load", render, { once: true });
-      document.head.appendChild(script);
-    }
+
     return () => {
-      if (widgetId.current) {
-        (window as Window & { turnstile?: TurnstileApi }).turnstile?.remove?.(widgetId.current);
+      active = false;
+      const turnstile = (window as TurnstileWindow).turnstile;
+      if (widgetId.current && turnstile?.remove) {
+        turnstile.remove(widgetId.current);
       }
       widgetId.current = null;
       done.current = false;

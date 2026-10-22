@@ -4,37 +4,39 @@ import { createStart, createCsrfMiddleware, createMiddleware } from "@tanstack/r
 import { renderErrorPage } from "./lib/error-page";
 import { applySecurityHeaders, validateRuntimeEnvironment } from "./lib/security";
 
-validateRuntimeEnvironment();
+if (import.meta.env.SSR) {
+  validateRuntimeEnvironment();
 
-if (process.env["BOT_WEBHOOK_URL"]) {
-  console.log("[portal] Bot verification callback configured");
-} else {
-  console.warn("[portal] BOT_WEBHOOK_URL is not configured");
-}
+  if (process.env["BOT_WEBHOOK_URL"]) {
+    console.log("[portal] Bot verification callback configured");
+  } else {
+    console.warn("[portal] BOT_WEBHOOK_URL is not configured");
+  }
 
-for (const name of [
-  "DATABASE_URL",
-  "BOT_TO_PORTAL_KEY",
-  "PORTAL_TO_BOT_KEY",
-  "AXEX_BOT_API_KEY",
-  "BOT_WEBHOOK_URL",
-  "DISCORD_CLIENT_ID",
-  "DISCORD_CLIENT_SECRET",
-  "DISCORD_REDIRECT_URI",
-  "TURNSTILE_SITE_KEY",
-  "TURNSTILE_SECRET_KEY",
-  "PROXYCHECK_API_KEY",
-  "INTELLIGENCE_URL",
-  "INTELLIGENCE_API_KEY",
-  "CRON_SECRET",
-  "TRUSTED_PROXY_MODE",
-]) {
-  const legacyApiKeyConfigured =
-    name === "BOT_TO_PORTAL_KEY" || name === "PORTAL_TO_BOT_KEY"
-      ? Boolean(process.env["AXEX_BOT_API_KEY"])
-      : false;
-  if (!process.env[name] && !legacyApiKeyConfigured)
-    console.warn(`[portal] ${name} is not configured; related functionality may be unavailable`);
+  for (const name of [
+    "DATABASE_URL",
+    "BOT_TO_PORTAL_KEY",
+    "PORTAL_TO_BOT_KEY",
+    "AXEX_BOT_API_KEY",
+    "BOT_WEBHOOK_URL",
+    "DISCORD_CLIENT_ID",
+    "DISCORD_CLIENT_SECRET",
+    "DISCORD_REDIRECT_URI",
+    "TURNSTILE_SITE_KEY",
+    "TURNSTILE_SECRET_KEY",
+    "PROXYCHECK_API_KEY",
+    "INTELLIGENCE_URL",
+    "INTELLIGENCE_API_KEY",
+    "CRON_SECRET",
+    "TRUSTED_PROXY_MODE",
+  ]) {
+    const legacyApiKeyConfigured =
+      name === "BOT_TO_PORTAL_KEY" || name === "PORTAL_TO_BOT_KEY"
+        ? Boolean(process.env["AXEX_BOT_API_KEY"])
+        : false;
+    if (!process.env[name] && !legacyApiKeyConfigured)
+      console.warn(`[portal] ${name} is not configured; related functionality may be unavailable`);
+  }
 }
 
 const errorMiddleware = createMiddleware().server(async ({ next }) => {

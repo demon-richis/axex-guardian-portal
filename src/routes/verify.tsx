@@ -300,7 +300,7 @@ function VerifyPage() {
   }, [busy, info?.discordUser, phase]);
 
   const fail = useCallback((k: ErrorKind) => {
-    console.error("[verify] Transitioning to error:", k);
+    console.warn("[verify] Transitioning to error:", k);
     setErrorKind(k);
     setPhase("error");
   }, []);
@@ -946,7 +946,10 @@ function InlineVerificationStatus({ stage }: { stage: number }) {
     >
       <div className="flex items-center gap-3">
         <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--green)]/25 bg-[var(--green-soft)]">
-          <span aria-hidden="true" className="absolute inset-1 animate-spin rounded-full border-2 border-transparent border-t-[var(--green)]" />
+          <span
+            aria-hidden="true"
+            className="absolute inset-1 animate-spin rounded-full border-2 border-transparent border-t-[var(--green)]"
+          />
           <span className="text-[10px] font-bold text-[var(--green-text)]">Ax</span>
         </span>
         <div className="min-w-0 flex-1">

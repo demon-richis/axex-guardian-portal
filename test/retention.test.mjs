@@ -66,6 +66,16 @@ test("scheduled retention removes expired tokens and audit logs but preserves lo
       updatedAt: old,
     });
     await db.insert(schema.botCallbackOutbox).values({
+      token: "old-delivered-callback",
+      referenceId: "AX-RETENTION2",
+      payload: { referenceId: "AX-RETENTION2" },
+      status: "delivered",
+      createdAt: old,
+      updatedAt: old,
+      deliveredAt: old,
+      nextAttemptAt: old,
+    });
+    await db.insert(schema.botCallbackOutbox).values({
       token: "expired-pending-callback",
       referenceId: "AX-RETENTION1",
       payload: { referenceId: "AX-RETENTION1" },
@@ -95,11 +105,14 @@ test("scheduled retention removes expired tokens and audit logs but preserves lo
 
     assert.equal(result.tokensDeleted, 1);
     assert.equal(result.auditLogsDeleted, 1);
+    assert.equal(result.outboxDeleted, 1);
     assert.equal(result.transientRowsDeleted, 0);
     assert.equal((await db.select().from(schema.verifyTokens)).length, 1);
     assert.equal((await db.select().from(schema.auditLogs))[0].eventType, "RECENT_AUDIT");
     assert.ok((await db.select().from(schema.verificationState))[0].lockedAt);
-    assert.equal((await db.select().from(schema.botCallbackOutbox))[0].status, "pending");
+    const outboxRows = await db.select().from(schema.botCallbackOutbox);
+    assert.equal(outboxRows.length, 1);
+    assert.equal(outboxRows[0].status, "pending");
   } finally {
     await client.close();
   }

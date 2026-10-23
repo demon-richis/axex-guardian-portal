@@ -1,6 +1,6 @@
-import { lt, sql } from "drizzle-orm";
+import { and, eq, lt, sql } from "drizzle-orm";
 import type { getDb } from "./db/client.server";
-import { auditLogs, ipCheckCache, rateLimitBuckets } from "./db/schema.ts";
+import { auditLogs, botCallbackOutbox, ipCheckCache, rateLimitBuckets } from "./db/schema.ts";
 
 type PortalDb = ReturnType<typeof getDb>;
 
@@ -18,11 +18,13 @@ export async function runPortalRetention(
   db: PortalDb,
   env: NodeJS.ProcessEnv = process.env,
   now = new Date(),
-): Promise<{ tokensDeleted: number; auditLogsDeleted: number; transientRowsDeleted: number }> {
+): Promise<{ tokensDeleted: number; auditLogsDeleted: number; outboxDeleted: number; transientRowsDeleted: number }> {
   const tokenDays = retentionDays(env, "TOKEN_RETENTION_DAYS", 30);
   const auditDays = retentionDays(env, "AUDIT_LOG_RETENTION_DAYS", 365);
+  const outboxDays = retentionDays(env, "OUTBOX_RETENTION_DAYS", 30);
   const tokenCutoff = new Date(now.getTime() - tokenDays * 86_400_000);
   const auditCutoff = new Date(now.getTime() - auditDays * 86_400_000);
+  const outboxCutoff = new Date(now.getTime() - outboxDays * 86_400_000);
 
   const expiredTokens = await db.execute(sql`
     DELETE FROM verify_tokens AS token
@@ -35,6 +37,10 @@ export async function runPortalRetention(
       )
     RETURNING token.token
   `);
+  const expiredOutbox = await db
+    .delete(botCallbackOutbox)
+    .where(and(eq(botCallbackOutbox.status, "delivered"), lt(botCallbackOutbox.deliveredAt, outboxCutoff)))
+    .returning({ id: botCallbackOutbox.id });
   const expiredAuditLogs = await db
     .delete(auditLogs)
     .where(lt(auditLogs.createdAt, auditCutoff))
@@ -51,6 +57,7 @@ export async function runPortalRetention(
   return {
     tokensDeleted: expiredTokens.rows.length,
     auditLogsDeleted: expiredAuditLogs.length,
+    outboxDeleted: expiredOutbox.length,
     transientRowsDeleted: expiredBuckets.length + expiredIpChecks.length,
   };
 }

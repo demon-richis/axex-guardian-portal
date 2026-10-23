@@ -162,7 +162,7 @@ export async function submitVerificationChallenge(
   const honeypotTriggered = Boolean(input.honeypotTriggered || input.honeypot?.trim());
   const vpnDetected = input.isVpn || input.vpnDetected === true;
   const vpnType = input.vpnTypeDetected ?? input.vpnType ?? null;
-  const botDetected = false;
+  const botDetected = honeypotTriggered;
   const sameIpUsers = input.observedIp
     ? Number(
         (
@@ -184,8 +184,8 @@ export async function submitVerificationChallenge(
             ? "Shared IP used by multiple users"
             : null;
   const flagged = Boolean(automaticReason);
-  const finalPassed = proofCorrect && !vpnDetected;
-  const locked = !finalPassed && (attempts >= 3 || vpnDetected);
+  const finalPassed = proofCorrect && !vpnDetected && !honeypotTriggered;
+  const locked = !finalPassed && (attempts >= 3 || vpnDetected || honeypotTriggered);
   const terminal = finalPassed || locked || vpnDetected;
   const cooldownUntil = terminal
     ? null

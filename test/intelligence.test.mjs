@@ -45,7 +45,13 @@ test("bot intelligence notifications include the verification reference ID", asy
     return new Response(null, { status: 200 });
   };
 
-  await notifyBotIntelligence("user-1", "guild-1", { riskScore: 10 }, "page_opened", "AX-REFERENCE1");
+  await notifyBotIntelligence(
+    "user-1",
+    "guild-1",
+    { riskScore: 10 },
+    "page_opened",
+    "AX-REFERENCE1",
+  );
   assert.equal(requestUrl, "/webhook/intelligence-event");
   assert.equal(requestBody.referenceId, "AX-REFERENCE1");
 });

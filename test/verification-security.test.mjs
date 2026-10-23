@@ -489,7 +489,7 @@ test("accounts younger than seven days are flagged without failing or burning at
     const { challenge } = await challengeFor(db, seed.token, now);
     const result = await submitVerificationChallenge(
       db,
-      submitInput(seed, challenge, "unused", { now, honeypotTriggered: true }),
+      submitInput(seed, challenge, "unused", { now, honeypotTriggered: false }),
     );
     const [audit] = await db.select().from(schema.auditLogs);
     const [outbox] = await db.select().from(schema.botCallbackOutbox);
@@ -503,6 +503,43 @@ test("accounts younger than seven days are flagged without failing or burning at
     assert.equal(outbox.payload.attempts, 0);
     assert.equal(outbox.payload.botDetected, false);
     assert.equal(outbox.payload.honeypotTriggered, true);
+  } finally {
+    await client.close();
+  }
+});
+
+test("a triggered honeypot cannot pass and produces a locked bot callback", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const seed = await seedToken(db);
+    const { challenge } = await challengeFor(db, seed.token);
+    const result = await submitVerificationChallenge(
+      db,
+      submitInput(seed, challenge, "unused", {
+        honeypotTriggered: true,
+        turnstileEnvironment: {
+          NODE_ENV: "production",
+          TURNSTILE_SECRET_KEY: "test-secret",
+        },
+        turnstileFetch: async () => Response.json({
+          success: true,
+          action: "axex_verify",
+          hostname: "portal.test",
+          cdata: challenge.turnstileCData,
+        }),
+      }),
+    );
+    const [row] = await db.select().from(schema.verifyTokens).where(eq(schema.verifyTokens.token, seed.token));
+    const [outbox] = await db.select().from(schema.botCallbackOutbox);
+
+    assert.equal(result.success, true);
+    assert.equal(result.passed, false);
+    assert.equal(result.locked, true);
+    assert.equal(row.status, "bot_update_pending");
+    assert.equal(outbox.payload.passed, false);
+    assert.equal(outbox.payload.botDetected, true);
+    assert.equal(outbox.payload.honeypotTriggered, true);
+    assert.equal(outbox.payload.locked, true);
   } finally {
     await client.close();
   }

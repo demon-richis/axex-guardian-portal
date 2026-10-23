@@ -81,6 +81,7 @@ The container listens on `0.0.0.0:$PORT` and can run on any Docker-compatible ho
 - `CRON_SECRET` — server-only bearer secret used by the Vercel Cron fallback for `/api/bot/outbox`.
 - `TOKEN_RETENTION_DAYS=30` — token retention for the scheduled cleanup. Verification state and active locks are not removed.
 - `AUDIT_LOG_RETENTION_DAYS=365` — audit-log retention for the scheduled cleanup.
+- `OUTBOX_RETENTION_DAYS=30` — retention for delivered callback payloads only; pending/processing callbacks are preserved.
 - `BOT_TO_PORTAL_KEY` — key for bot requests to portal APIs.
 - `PORTAL_TO_BOT_KEY` — key for portal callbacks to the bot.
 - `AXEX_BOT_API_KEY` — deprecated one-release fallback for either direction; rotate to the directional keys.

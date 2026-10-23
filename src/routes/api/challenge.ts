@@ -65,10 +65,7 @@ export const Route = createFileRoute("/api/challenge")({
           );
         }
         try {
-          const [{ getDb }, { issueVerificationChallenge }] = await Promise.all([
-            import("@/lib/db/client.server"),
-            import("@/lib/verification-challenge.server"),
-          ]);
+          const { issueVerificationChallenge } = await import("@/lib/verification-challenge.server");
           const result = await issueVerificationChallenge(db, parsed.data.token);
           if (result.success) {
             return Response.json({

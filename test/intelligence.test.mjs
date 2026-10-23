@@ -34,6 +34,22 @@ test("bot intelligence notifications retain the legacy key fallback", async () =
   assert.equal(await capturedKey(), "legacy-key");
 });
 
+test("bot intelligence notifications include the verification reference ID", async () => {
+  process.env.BOT_WEBHOOK_URL = "https://bot.test/webhook/verify-result";
+  process.env.PORTAL_TO_BOT_KEY = "portal-to-bot-key";
+  let requestUrl;
+  let requestBody;
+  globalThis.fetch = async (url, init) => {
+    requestUrl = new URL(url).pathname;
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(null, { status: 200 });
+  };
+
+  await notifyBotIntelligence("user-1", "guild-1", { riskScore: 10 }, "page_opened", "AX-REFERENCE1");
+  assert.equal(requestUrl, "/webhook/intelligence-event");
+  assert.equal(requestBody.referenceId, "AX-REFERENCE1");
+});
+
 test.after(() => {
   if (originalWebhookUrl === undefined) delete process.env.BOT_WEBHOOK_URL;
   else process.env.BOT_WEBHOOK_URL = originalWebhookUrl;

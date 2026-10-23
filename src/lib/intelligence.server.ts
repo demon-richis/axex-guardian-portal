@@ -78,6 +78,7 @@ export async function notifyBotIntelligence(
   guildId: string,
   result: IntelligenceResult,
   source: string,
+  referenceId?: string | null,
 ): Promise<void> {
   const configuredUrl = process.env["BOT_WEBHOOK_URL"]?.trim();
   const apiKey =
@@ -91,7 +92,7 @@ export async function notifyBotIntelligence(
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-      body: JSON.stringify({ userId, guildId, source, result }),
+      body: JSON.stringify({ userId, guildId, source, result, ...(referenceId ? { referenceId } : {}) }),
       signal: AbortSignal.timeout(4000),
     });
     console.log("[intelligence] Bot log response:", response.status);

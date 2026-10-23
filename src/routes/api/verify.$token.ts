@@ -96,7 +96,7 @@ export const Route = createFileRoute("/api/verify/$token")({
             });
           }
           if (row.used) return Response.json({ valid: false, reason: "used" });
-          if (row.expiresAt.getTime() < Date.now())
+          if (row.expiresAt.getTime() <= Date.now())
             return Response.json({ valid: false, reason: "expired" });
           return Response.json({
             valid: true,

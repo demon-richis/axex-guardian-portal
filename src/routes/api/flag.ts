@@ -52,19 +52,19 @@ export const Route = createFileRoute("/api/flag")({
               })
               .returning({ attemptCount: suspiciousAttempts.attemptCount })
           )[0];
-          const autoBanned = (attempt?.attemptCount ?? 1) >= 3;
+          const reviewRequired = (attempt?.attemptCount ?? 1) >= 3;
           console.log(
             "[flag] Attempt count:",
             attempt?.attemptCount ?? 1,
-            "auto-banned:",
-            autoBanned,
+            "review required:",
+            reviewRequired,
           );
           await db.insert(auditLogs).values({
             guildId: value.guildId,
             userId: value.userId,
             discordTag: value.discordTag ?? null,
-            eventType: autoBanned ? "AUTO_BANNED" : "SUSPICIOUS",
-            severity: autoBanned ? "critical" : "warn",
+            eventType: reviewRequired ? "REVIEW_THRESHOLD_REACHED" : "SUSPICIOUS",
+            severity: reviewRequired ? "critical" : "warn",
             ipAddress: value.ipAddress ?? null,
             accountAgeDays: value.accountAgeDays ?? null,
             clickMs: value.clickMs ?? null,
@@ -73,7 +73,7 @@ export const Route = createFileRoute("/api/flag")({
           });
           return Response.json({
             success: true,
-            autoBanned,
+            reviewRequired,
             attemptCount: attempt?.attemptCount ?? 1,
           });
         } catch (error) {

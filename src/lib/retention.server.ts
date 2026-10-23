@@ -18,7 +18,12 @@ export async function runPortalRetention(
   db: PortalDb,
   env: NodeJS.ProcessEnv = process.env,
   now = new Date(),
-): Promise<{ tokensDeleted: number; auditLogsDeleted: number; outboxDeleted: number; transientRowsDeleted: number }> {
+): Promise<{
+  tokensDeleted: number;
+  auditLogsDeleted: number;
+  outboxDeleted: number;
+  transientRowsDeleted: number;
+}> {
   const tokenDays = retentionDays(env, "TOKEN_RETENTION_DAYS", 30);
   const auditDays = retentionDays(env, "AUDIT_LOG_RETENTION_DAYS", 365);
   const outboxDays = retentionDays(env, "OUTBOX_RETENTION_DAYS", 30);
@@ -39,7 +44,12 @@ export async function runPortalRetention(
   `);
   const expiredOutbox = await db
     .delete(botCallbackOutbox)
-    .where(and(eq(botCallbackOutbox.status, "delivered"), lt(botCallbackOutbox.deliveredAt, outboxCutoff)))
+    .where(
+      and(
+        eq(botCallbackOutbox.status, "delivered"),
+        lt(botCallbackOutbox.deliveredAt, outboxCutoff),
+      ),
+    )
     .returning({ id: botCallbackOutbox.id });
   const expiredAuditLogs = await db
     .delete(auditLogs)

@@ -521,15 +521,19 @@ test("a triggered honeypot cannot pass and produces a locked bot callback", asyn
           NODE_ENV: "production",
           TURNSTILE_SECRET_KEY: "test-secret",
         },
-        turnstileFetch: async () => Response.json({
-          success: true,
-          action: "axex_verify",
-          hostname: "portal.test",
-          cdata: challenge.turnstileCData,
-        }),
+        turnstileFetch: async () =>
+          Response.json({
+            success: true,
+            action: "axex_verify",
+            hostname: "portal.test",
+            cdata: challenge.turnstileCData,
+          }),
       }),
     );
-    const [row] = await db.select().from(schema.verifyTokens).where(eq(schema.verifyTokens.token, seed.token));
+    const [row] = await db
+      .select()
+      .from(schema.verifyTokens)
+      .where(eq(schema.verifyTokens.token, seed.token));
     const [outbox] = await db.select().from(schema.botCallbackOutbox);
 
     assert.equal(result.success, true);

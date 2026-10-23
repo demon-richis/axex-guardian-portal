@@ -13,6 +13,19 @@ if (import.meta.env.SSR) {
     console.warn("[portal] BOT_WEBHOOK_URL is not configured");
   }
 
+  if (process.env["BOT_WEBHOOK_URL"]) {
+    try {
+      const webhookUrl = new URL(process.env["BOT_WEBHOOK_URL"]);
+      if (process.env["NODE_ENV"] === "production" && webhookUrl.protocol !== "https:") {
+        console.error(
+          "[portal] SECURITY WARNING: BOT_WEBHOOK_URL uses plaintext HTTP. Put the bot receiver behind a TLS reverse proxy or HTTPS tunnel before production use.",
+        );
+      }
+    } catch {
+      // Runtime environment validation reports malformed URLs before requests are served.
+    }
+  }
+
   for (const name of [
     "DATABASE_URL",
     "BOT_TO_PORTAL_KEY",

@@ -85,7 +85,7 @@ The container listens on `0.0.0.0:$PORT` and can run on any Docker-compatible ho
 - `BOT_TO_PORTAL_KEY` — key for bot requests to portal APIs.
 - `PORTAL_TO_BOT_KEY` — key for portal callbacks to the bot.
 - `AXEX_BOT_API_KEY` — deprecated one-release fallback for either direction; rotate to the directional keys.
-- `BOT_WEBHOOK_URL` — server-only bot verification-result receiver.
+- `BOT_WEBHOOK_URL` — server-only bot verification-result receiver. Use HTTPS in production; the server warns if this is configured with plain HTTP.
 - `INTELLIGENCE_URL` — server-only account intelligence API base URL.
 - `INTELLIGENCE_API_KEY` — server-only account intelligence API key.
 

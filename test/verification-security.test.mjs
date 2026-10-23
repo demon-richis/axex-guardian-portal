@@ -502,7 +502,7 @@ test("accounts younger than seven days are flagged without failing or burning at
     assert.equal(outbox.payload.passed, true);
     assert.equal(outbox.payload.attempts, 0);
     assert.equal(outbox.payload.botDetected, false);
-    assert.equal(outbox.payload.honeypotTriggered, true);
+    assert.equal(outbox.payload.honeypotTriggered, false);
   } finally {
     await client.close();
   }

@@ -3,6 +3,7 @@ export type TurnstileClientErrorKind =
   | "turnstileRateLimited"
   | "turnstileIdentityMismatch"
   | "turnstileExpired"
+  | "turnstileRetry"
   | "captchaUnavailable"
   | "generic";
 
@@ -23,6 +24,7 @@ export const TURNSTILE_ERROR_TEXT: Record<TurnstileClientErrorKind, [string, str
     "Challenge expired",
     "The security challenge expired; please complete it again.",
   ],
+  turnstileRetry: ["Check again", "Please complete the check again."],
   captchaUnavailable: [
     "Verification service unavailable",
     "The secure challenge provider is temporarily unavailable. No attempt was used; please try again shortly.",
@@ -67,6 +69,12 @@ export function mapTurnstileError(
         kind: "captchaUnavailable",
         title: TURNSTILE_ERROR_TEXT.captchaUnavailable[0],
         description: TURNSTILE_ERROR_TEXT.captchaUnavailable[1],
+      };
+    case "turnstile_retry":
+      return {
+        kind: "turnstileRetry",
+        title: TURNSTILE_ERROR_TEXT.turnstileRetry[0],
+        description: TURNSTILE_ERROR_TEXT.turnstileRetry[1],
       };
     case "identity_mismatch":
       return {

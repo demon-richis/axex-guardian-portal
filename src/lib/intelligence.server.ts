@@ -92,7 +92,13 @@ export async function notifyBotIntelligence(
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": apiKey },
-      body: JSON.stringify({ userId, guildId, source, result, ...(referenceId ? { referenceId } : {}) }),
+      body: JSON.stringify({
+        userId,
+        guildId,
+        source,
+        result,
+        ...(referenceId ? { referenceId } : {}),
+      }),
       signal: AbortSignal.timeout(4000),
     });
     console.log("[intelligence] Bot log response:", response.status);

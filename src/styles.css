@@ -144,4 +144,42 @@
     outline: 2px solid var(--green);
     outline-offset: 3px;
   }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  a[href],
+  summary,
+  label[for],
+  select {
+    cursor: pointer;
+  }
+
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
+
+  [aria-busy="true"] {
+    cursor: progress;
+  }
+
+  button:focus-visible,
+  a[href]:focus-visible {
+    outline: 2px solid var(--green);
+    outline-offset: 3px;
+  }
+
+  button {
+    min-height: 44px;
+  }
+
+  button:not(:disabled),
+  a[href] {
+    transition: opacity 150ms ease;
+  }
+
+  button:not(:disabled):hover,
+  a[href]:hover {
+    opacity: 0.86;
+  }
 }

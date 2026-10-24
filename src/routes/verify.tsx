@@ -1,5 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { mapTurnstileError, shouldSubmitTurnstileToken } from "../lib/turnstile-client";
+import { loadingViewMode, stageStates } from "../lib/loading-stages";
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { z } from "zod";
@@ -254,7 +255,7 @@ function VerifyPage() {
   const [failureReason, setFailureReason] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
   const [cooldownSeconds, setCooldownSeconds] = useState<number | null>(null);
-  const [loadingStage, setLoadingStage] = useState(0);
+  const [networkChecked, setNetworkChecked] = useState(false);
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [turnstileSiteKey, setTurnstileSiteKey] = useState("");
 
@@ -308,7 +309,9 @@ function VerifyPage() {
   const runIpCheck = useCallback(
     async (signal?: AbortSignal) => {
       console.log("[verify] Step 2: Starting IP check");
-      setLoadingStage(1);
+      setNetworkChecked(false);
+      setChallenge(null);
+      setTurnstileSiteKey("");
       setBusy(true);
       try {
         const response = await fetch(`/api/check-ip?token=${encodeURIComponent(token)}`, {
@@ -327,12 +330,12 @@ function VerifyPage() {
           isVPN: result.isVPN === true,
         });
         if (signal?.aborted) return;
+        setNetworkChecked(true);
         if (result.status === "blocked" || result.isVPN) {
           track(token, "network_blocked");
           setPhase("vpn");
         } else if (result.status === "clear") {
           track(token, "network_clear");
-          setLoadingStage(2);
           const challengeResponse = await fetchVerification("/api/challenge", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -559,7 +562,11 @@ function VerifyPage() {
   );
 
   const submitAnswer = useCallback(
-    async (turnstileToken: string, clickMs: number, honeypotTriggered = false) => {
+    async (
+      turnstileToken: string,
+      clickMs: number,
+      honeypotTriggered = false,
+    ): Promise<"retry" | void> => {
       const result = await submitAttempt(turnstileToken, clickMs, honeypotTriggered);
       if (result?.success && result.passed) {
         console.log("[verify] Server accepted the challenge proof");
@@ -580,6 +587,7 @@ function VerifyPage() {
       );
 
       const mappedError = mapTurnstileError(result?.error, result?.retryAfterSeconds);
+      if (mappedError.kind === "turnstileRetry") return "retry";
       const serverAttempts = result?.attempts ?? attempts;
       if (result?.success && serverAttempts > 0) {
         setAttempts(serverAttempts);
@@ -649,21 +657,32 @@ function VerifyPage() {
   const ageDays = user
     ? Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000)
     : null;
+  const loading = phase === "loading" || (oauthReturn && busy);
+  const loadingState = stageStates({
+    linkValid: info !== null,
+    authDone: Boolean(user),
+    networkChecked,
+    challengeReady: challenge !== null,
+  });
 
   return (
     <main className="relative flex min-h-screen flex-col items-center justify-center overflow-hidden bg-background px-4 py-10">
       <div className="pointer-events-none absolute -left-40 -top-40 h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle,var(--red)_0%,transparent_70%)] opacity-[0.08]" />
       <div className="pointer-events-none absolute -bottom-40 -right-40 h-[520px] w-[520px] rounded-full bg-[radial-gradient(circle,var(--green)_0%,transparent_70%)] opacity-[0.06]" />
 
-      <CardShell phase={phase}>
-        {!oauthReturn && (phase === "loading" || busy) ? (
-          <VerificationLoader stage={loadingStage} />
-        ) : null}
-        {oauthReturn && (phase === "loading" || busy) && (
-          <InlineVerificationStatus stage={loadingStage} />
-        )}
+      <CardShell
+        phase={phase}
+        loadingContent={
+          loading ? (
+            <VerificationLoader
+              oauthReturn={oauthReturn}
+              stages={loadingState}
+              user={user ?? null}
+            />
+          ) : undefined
+        }
+      >
         {phase !== "error" && phase !== "loading" && <Steps step={step} />}
-
         <AnimatePresence mode="wait">
           {phase === "error" && (
             <motion.div key="err" {...fade}>
@@ -916,196 +935,125 @@ function VerifyPage() {
   );
 }
 
-function CardShell({ children, phase }: { children: React.ReactNode; phase: Phase }) {
+function CardShell({
+  children,
+  phase,
+  loadingContent,
+}: {
+  children: React.ReactNode;
+  phase: Phase;
+  loadingContent?: React.ReactNode;
+}) {
   return (
     <div
       data-phase={phase}
-      className={`relative w-full max-w-[400px] overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-[0_1px_2px_rgba(0,0,0,0.6),0_12px_32px_rgba(0,0,0,0.55),0_40px_100px_rgba(220,38,38,0.08)] ${phase === "loading" ? "min-h-[500px]" : ""}`}
+      className="relative w-full max-w-[400px] overflow-hidden rounded-2xl border border-border bg-card p-6 shadow-[0_1px_2px_rgba(0,0,0,0.6),0_12px_32px_rgba(0,0,0,0.55),0_40px_100px_rgba(220,38,38,0.08)]"
     >
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-[var(--red)] via-[var(--green)] to-transparent" />
-      {children}
+      {loadingContent ?? children}
     </div>
   );
 }
 
-const LOADING_STAGES = [
-  ["Checking your link", "Confirming that this link is valid and belongs to this server."],
-  ["Checking your network", "Checking for VPN, proxy, or hosting connections."],
-  ["Loading the human check", "Preparing the secure verification challenge."],
+const LOADING_STAGE_LABELS = [
+  "Checking your link",
+  "Checking your network",
+  "Loading the human check",
 ] as const;
 
-function InlineVerificationStatus({ stage }: { stage: number }) {
-  const activeStage = Math.min(Math.max(stage, 0), LOADING_STAGES.length - 1);
-  const [title, description] = LOADING_STAGES[activeStage] ?? LOADING_STAGES[0];
-
-  return (
-    <div
-      role="status"
-      aria-live="polite"
-      className="rounded-2xl border border-[var(--surface-border-2)] bg-[var(--surface)] p-4"
-    >
-      <div className="flex items-center gap-3">
-        <span className="relative flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-[var(--green)]/25 bg-[var(--green-soft)]">
-          <span
-            aria-hidden="true"
-            className="absolute inset-1 animate-spin rounded-full border-2 border-transparent border-t-[var(--green)]"
-          />
-          <span className="text-[10px] font-bold text-[var(--green-text)]">Ax</span>
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-[var(--green-text)]">
-              Secure verification
-            </p>
-            <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground">
-              Step {activeStage + 1} of {LOADING_STAGES.length}
-            </span>
-          </div>
-          <p className="mt-1 text-sm font-semibold text-foreground">{title}</p>
-        </div>
-      </div>
-      <p className="mt-3 pl-14 text-xs leading-5 text-muted-foreground">{description}</p>
+function VerificationLoader({
+  oauthReturn,
+  stages,
+  user,
+}: {
+  oauthReturn: boolean;
+  stages: ReturnType<typeof stageStates>;
+  user: NonNullable<TokenInfo["discordUser"]> | null;
+}) {
+  if (loadingViewMode(oauthReturn) === "compact") {
+    return (
       <div
-        className="mt-4 flex gap-1.5 pl-14"
-        role="progressbar"
-        aria-label="Verification progress"
-        aria-valuemin={1}
-        aria-valuemax={LOADING_STAGES.length}
-        aria-valuenow={activeStage + 1}
-        aria-valuetext={`Step ${activeStage + 1} of ${LOADING_STAGES.length}: ${title}`}
+        role="status"
+        aria-live="polite"
+        aria-busy="true"
+        className="flex min-h-14 items-center justify-center gap-3"
       >
-        {LOADING_STAGES.map(([stageTitle], index) => (
-          <span
-            key={stageTitle}
-            aria-hidden="true"
-            className={`h-1.5 flex-1 rounded-full transition-colors duration-300 ${
-              index <= activeStage
-                ? "bg-gradient-to-r from-[var(--red)] to-[var(--green)]"
-                : "bg-[var(--pill)]"
-            }`}
-          />
-        ))}
+        <span
+          aria-hidden="true"
+          className="h-5 w-5 animate-spin rounded-full border-2 border-[var(--green)]/20 border-t-[var(--green)]"
+        />
+        <span className="text-sm font-medium text-foreground">Checking your link...</span>
       </div>
-    </div>
-  );
-}
+    );
+  }
 
-function VerificationLoader({ stage }: { stage: number }) {
-  const activeStage = Math.min(Math.max(stage, 0), LOADING_STAGES.length - 1);
-  const [activeTitle, activeDescription] = LOADING_STAGES[activeStage] ?? LOADING_STAGES[0];
+  const descriptions = [
+    user ? `Signed in as @${user.username}` : LOADING_STAGE_LABELS[0],
+    LOADING_STAGE_LABELS[1],
+    LOADING_STAGE_LABELS[2],
+  ];
+  const avatar = user
+    ? user.avatar
+      ? `https://cdn.discordapp.com/avatars/${user.id}/${user.avatar}.png?size=64`
+      : `https://cdn.discordapp.com/embed/avatars/${Number(BigInt(user.id) >> 22n) % 6}.png`
+    : null;
+
   return (
-    <div
-      className="absolute inset-0 z-20 flex items-center justify-center bg-card/95 px-6 py-8 backdrop-blur-sm"
-      role="status"
-      aria-live="polite"
-    >
-      <div className="w-full max-w-[330px]">
-        <div className="mb-7 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-[var(--red)]/25 bg-gradient-to-br from-[var(--red-soft)] to-[var(--green-soft)] text-sm font-bold text-foreground">
-              Ax
-            </span>
-            <div>
-              <p className="text-sm font-bold text-foreground">Axex</p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">Secure verification</p>
-            </div>
-          </div>
-          <span className="rounded-full border border-[var(--green)]/25 bg-[var(--green-soft)] px-2.5 py-1 text-[10px] font-medium uppercase tracking-wider text-[var(--green-text)]">
-            Secure
-          </span>
-        </div>
-
-        <div className="mb-6 flex flex-col items-center rounded-2xl border border-[var(--surface-border-2)] bg-[var(--surface)] px-4 py-5 text-center">
-          <div className="relative mb-4 flex h-16 w-16 items-center justify-center rounded-full border border-[var(--green)]/20 bg-[var(--green-soft)]">
-            <span className="absolute inset-1 animate-spin rounded-full border-2 border-transparent border-t-[var(--green)]" />
-            <span className="absolute inset-2 rounded-full border border-[var(--red)]/15" />
-            <span className="text-sm font-bold text-foreground">Ax</span>
-          </div>
-          <p className="text-sm font-semibold text-foreground">{activeTitle}</p>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">{activeDescription}</p>
-        </div>
-
-        <div className="mb-4 flex items-center justify-between">
-          <p className="text-[11px] font-semibold text-muted-foreground">Verification progress</p>
-          <span className="text-[11px] tabular-nums text-muted-foreground">
-            {`Step ${activeStage + 1} of ${LOADING_STAGES.length}`}
-          </span>
-        </div>
-        <div
-          className="mb-5 flex gap-1.5"
-          role="progressbar"
-          aria-label="Verification progress"
-          aria-valuemin={1}
-          aria-valuemax={LOADING_STAGES.length}
-          aria-valuenow={activeStage + 1}
-          aria-valuetext={`Step ${activeStage + 1} of ${LOADING_STAGES.length}: ${activeTitle}`}
-        >
-          {LOADING_STAGES.map(([title], index) => (
-            <span
-              key={title}
-              className={`h-1.5 flex-1 rounded-full transition-colors duration-300 ${
-                index <= activeStage
-                  ? "bg-gradient-to-r from-[var(--red)] to-[var(--green)]"
-                  : "bg-[var(--pill)]"
-              }`}
-            />
-          ))}
-        </div>
-
-        <div className="space-y-2">
-          {LOADING_STAGES.map(([title, description], index) => {
-            const complete = index < activeStage;
-            const current = index === activeStage;
-            return (
-              <div
-                key={title}
-                aria-current={current ? "step" : undefined}
-                className={`flex items-center gap-3 rounded-xl border px-3 py-2.5 transition-colors ${
-                  current
-                    ? "border-[var(--green)]/30 bg-[var(--green-soft)]"
-                    : complete
-                      ? "border-[var(--surface-border)] bg-[var(--surface)]"
-                      : "border-transparent bg-[var(--surface)] opacity-55"
+    <div aria-live="polite" aria-busy="true" className="space-y-3 py-1">
+      {LOADING_STAGE_LABELS.map((label, index) => {
+        const state = stages[index] ?? "pending";
+        return (
+          <div
+            key={label}
+            aria-current={state === "active" ? "step" : undefined}
+            className={`flex min-h-12 items-center gap-3 rounded-xl border px-3 py-2 ${
+              state === "active"
+                ? "border-[var(--green)]/30 bg-[var(--green-soft)]"
+                : state === "done"
+                  ? "border-[var(--surface-border)] bg-[var(--surface)]"
+                  : "border-transparent bg-[var(--surface)] opacity-55"
+            }`}
+          >
+            {index === 0 && state === "done" && avatar ? (
+              <img
+                src={avatar}
+                alt=""
+                className="h-8 w-8 shrink-0 rounded-full border border-[var(--green)]/25"
+              />
+            ) : (
+              <span
+                aria-hidden="true"
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
+                  state === "done"
+                    ? "bg-[var(--green-soft)] text-[var(--green-text)]"
+                    : state === "active"
+                      ? "border border-[var(--green)]/50 text-[var(--green)]"
+                      : "bg-[var(--pill)] text-muted-foreground"
                 }`}
               >
-                <span
-                  className={`flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
-                    complete
-                      ? "bg-[var(--green-soft)] text-[var(--green-text)]"
-                      : current
-                        ? "border border-[var(--green)]/50 text-[var(--green)]"
-                        : "bg-[var(--pill)] text-muted-foreground"
-                  }`}
-                >
-                  {complete ? (
-                    "✓"
-                  ) : current ? (
-                    <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--green)]" />
-                  ) : (
-                    index + 1
-                  )}
-                </span>
-                <div className="min-w-0">
-                  <p
-                    className={`text-xs ${
-                      current
-                        ? "font-semibold text-foreground"
-                        : "font-medium text-muted-foreground"
-                    }`}
-                  >
-                    {title}
-                  </p>
-                  {current && <span className="sr-only">: {description}</span>}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-
-        <p className="mt-5 text-center text-[11px] text-[var(--faint)]">
-          This usually takes a few seconds. Please keep this tab open.
-        </p>
-      </div>
+                {state === "done" ? (
+                  "✓"
+                ) : state === "active" ? (
+                  <span className="h-2 w-2 animate-pulse rounded-full bg-[var(--green)]" />
+                ) : (
+                  index + 1
+                )}
+              </span>
+            )}
+            <span
+              className={`min-w-0 text-sm ${
+                state === "active"
+                  ? "font-semibold text-foreground"
+                  : state === "done"
+                    ? "font-medium text-foreground"
+                    : "font-medium text-muted-foreground"
+              }`}
+            >
+              {descriptions[index]}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -1250,11 +1198,16 @@ function Captcha({
   challenge: Challenge;
   siteKey: string;
   demoMode: boolean;
-  onSubmit: (turnstileToken: string, clickMs: number, honeypotTriggered?: boolean) => Promise<void>;
+  onSubmit: (
+    turnstileToken: string,
+    clickMs: number,
+    honeypotTriggered?: boolean,
+  ) => Promise<"retry" | void>;
   onTurnstileError?: (code: string) => void;
 }) {
   const honeypotTriggered = useRef(false);
   const [challengeExpired, setChallengeExpired] = useState(false);
+  const [retryRequired, setRetryRequired] = useState(false);
   const widgetRef = useRef<HTMLDivElement>(null);
   const widgetId = useRef<string | null>(null);
   const startedAt = useRef(Date.now());
@@ -1278,7 +1231,17 @@ function Captcha({
             if (done.current) return;
             done.current = true;
             setChallengeExpired(false);
-            void onSubmit(token, Date.now() - startedAt.current, honeypotTriggered.current);
+            setRetryRequired(false);
+            void onSubmit(token, Date.now() - startedAt.current, honeypotTriggered.current).then(
+              (result) => {
+                if (result !== "retry") return;
+                done.current = false;
+                setRetryRequired(true);
+                if (widgetId.current && turnstile.reset) {
+                  turnstile.reset(widgetId.current);
+                }
+              },
+            );
           },
           "expired-callback": () => {
             if (done.current) return;
@@ -1398,6 +1361,15 @@ function Captcha({
         {challengeExpired && (
           <p className="mt-3 text-center text-xs text-[var(--amber)]">
             Challenge expired, please complete it again.
+          </p>
+        )}
+        {retryRequired && (
+          <p
+            role="status"
+            aria-live="polite"
+            className="mt-3 text-center text-xs text-muted-foreground"
+          >
+            Please complete the check again.
           </p>
         )}
       </div>

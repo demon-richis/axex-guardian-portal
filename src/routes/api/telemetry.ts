@@ -149,7 +149,13 @@ export const Route = createFileRoute("/api/telemetry")({
               avatar: row.discordAvatar,
             });
             if (analysis) {
-              await notifyBotIntelligence(userId, row.guildId, analysis, parsed.data.event, row.referenceId);
+              await notifyBotIntelligence(
+                userId,
+                row.guildId,
+                analysis,
+                parsed.data.event,
+                row.referenceId,
+              );
             }
           }
           return Response.json({ success: true });

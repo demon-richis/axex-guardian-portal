@@ -65,7 +65,8 @@ export const Route = createFileRoute("/api/challenge")({
           );
         }
         try {
-          const { issueVerificationChallenge } = await import("@/lib/verification-challenge.server");
+          const { issueVerificationChallenge } =
+            await import("@/lib/verification-challenge.server");
           const result = await issueVerificationChallenge(db, parsed.data.token);
           if (result.success) {
             return Response.json({

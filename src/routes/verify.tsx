@@ -729,7 +729,7 @@ function VerifyPage() {
                 </PrimaryButton>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  Return using the same verification link when the timer ends.
+                  When the timer ends, press Verify again in Discord to get a new link.
                 </p>
               )}
             </motion.div>

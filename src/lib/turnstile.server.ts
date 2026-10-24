@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { normalizePortalHostname } from "./security.ts";
 
 const SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify";
 const TURNSTILE_ACTION = "axex_verify";
@@ -12,7 +13,34 @@ type SiteVerifyResponse = {
 };
 
 export type TurnstileResult =
-  { ok: true } | { ok: false; error: "turnstile_invalid" | "turnstile_unavailable" };
+  | { ok: true }
+  | { ok: false; error: "turnstile_invalid" | "turnstile_retry" | "turnstile_unavailable" };
+
+function logTurnstileFailure({
+  errorCodes = [],
+  expectedHostname,
+  resultHostname = null,
+  resultAction = null,
+  cdataMatched = null,
+}: {
+  errorCodes?: string[];
+  expectedHostname: string;
+  resultHostname?: string | null;
+  resultAction?: string | null;
+  cdataMatched?: boolean | null;
+}): void {
+  console.warn(
+    JSON.stringify({
+      event: "turnstile_verify_failed",
+      errorCodes,
+      expectedHostname,
+      resultHostname,
+      expectedAction: TURNSTILE_ACTION,
+      resultAction,
+      cdataMatched,
+    }),
+  );
+}
 
 export function turnstileContext(
   token: string,
@@ -38,7 +66,11 @@ export async function verifyTurnstile(
   nowEnv: NodeJS.ProcessEnv = process.env,
   fetchImpl: typeof fetch = fetch,
 ): Promise<TurnstileResult> {
+  const expectedHostname = normalizePortalHostname(
+    nowEnv["PORTAL_HOSTNAME"]?.trim() || context.requestHostname,
+  );
   if (!responseToken || responseToken.length > 2048) {
+    logTurnstileFailure({ expectedHostname });
     return { ok: false, error: "turnstile_invalid" };
   }
 
@@ -46,10 +78,10 @@ export async function verifyTurnstile(
   if (nowEnv["NODE_ENV"] !== "production" && !secret && responseToken === "dev-bypass") {
     return { ok: true };
   }
-  if (nowEnv["NODE_ENV"] !== "production" && !secret) {
-    return { ok: false, error: "turnstile_invalid" };
+  if (!secret) {
+    logTurnstileFailure({ errorCodes: ["missing-input-secret"], expectedHostname });
+    return { ok: false, error: "turnstile_unavailable" };
   }
-  if (!secret) return { ok: false, error: "turnstile_unavailable" };
 
   try {
     const body = new URLSearchParams({ secret, response: responseToken });
@@ -60,22 +92,52 @@ export async function verifyTurnstile(
       body,
       signal: AbortSignal.timeout(5_000),
     });
-    if (!response.ok) return { ok: false, error: "turnstile_unavailable" };
+    if (!response.ok) {
+      logTurnstileFailure({
+        errorCodes: [`http-status-${response.status}`],
+        expectedHostname,
+      });
+      return { ok: false, error: "turnstile_unavailable" };
+    }
     const result = (await response.json()) as SiteVerifyResponse;
-    const expectedHostname = (nowEnv["PORTAL_HOSTNAME"]?.trim() || context.requestHostname)
-      .toLowerCase()
-      .replace(/\.$/, "");
+    const errorCodes = Array.isArray(result["error-codes"])
+      ? result["error-codes"].filter((code): code is string => typeof code === "string")
+      : [];
+    if (
+      errorCodes.some((code) =>
+        ["missing-input-secret", "invalid-input-secret", "bad-request", "internal-error"].includes(
+          code,
+        ),
+      )
+    ) {
+      logTurnstileFailure({ errorCodes, expectedHostname });
+      return { ok: false, error: "turnstile_unavailable" };
+    }
+    if (errorCodes.includes("timeout-or-duplicate")) {
+      logTurnstileFailure({ errorCodes, expectedHostname });
+      return { ok: false, error: "turnstile_retry" };
+    }
+    const cdataMatched =
+      result.cdata ===
+      turnstileContext(context.token, context.discordId, context.guildId, context.challengeId);
     if (
       result.success !== true ||
       result.action !== TURNSTILE_ACTION ||
-      result.hostname?.toLowerCase().replace(/\.$/, "") !== expectedHostname ||
-      result.cdata !==
-        turnstileContext(context.token, context.discordId, context.guildId, context.challengeId)
+      normalizePortalHostname(result.hostname ?? "") !== expectedHostname ||
+      !cdataMatched
     ) {
+      logTurnstileFailure({
+        errorCodes,
+        expectedHostname,
+        resultHostname: result.hostname ?? null,
+        resultAction: result.action ?? null,
+        cdataMatched,
+      });
       return { ok: false, error: "turnstile_invalid" };
     }
     return { ok: true };
   } catch {
+    logTurnstileFailure({ errorCodes: ["network-error"], expectedHostname });
     return { ok: false, error: "turnstile_unavailable" };
   }
 }

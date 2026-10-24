@@ -148,11 +148,14 @@ export async function submitVerificationChallenge(
     input.turnstileEnvironment ?? process.env,
     input.turnstileFetch,
   );
-  if (!turnstile.ok && turnstile.error === "turnstile_unavailable") {
+  if (
+    !turnstile.ok &&
+    (turnstile.error === "turnstile_unavailable" || turnstile.error === "turnstile_retry")
+  ) {
     return {
       success: false,
       error: turnstile.error,
-      httpStatus: 503,
+      httpStatus: turnstile.error === "turnstile_retry" ? 409 : 503,
     };
   }
   const proofCorrect = turnstile.ok;

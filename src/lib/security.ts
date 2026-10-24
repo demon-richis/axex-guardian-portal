@@ -16,6 +16,15 @@ function contentSecurityPolicy(nonce: string): string {
   ].join("; ");
 }
 
+export function normalizePortalHostname(value: string): string {
+  const withoutScheme = value
+    .trim()
+    .toLowerCase()
+    .replace(/^[a-z][a-z\d+.-]*:\/\//, "");
+  const hostname = withoutScheme.split(/[/?#]/, 1)[0] ?? "";
+  return hostname.replace(/:\d+$/, "").replace(/\.$/, "");
+}
+
 export function applySecurityHeaders(
   request: Request,
   response: Response,
@@ -42,6 +51,10 @@ export function validateRuntimeEnvironment(
   env: NodeJS.ProcessEnv = process.env,
   isProduction = env["NODE_ENV"] === "production",
 ): void {
+  const portalHostname = env["PORTAL_HOSTNAME"];
+  if (portalHostname && (portalHostname.includes("://") || portalHostname.includes("/"))) {
+    throw new Error("PORTAL_HOSTNAME must contain only a hostname, without a scheme or path");
+  }
   const trustedProxyMode = env["TRUSTED_PROXY_MODE"] ?? "none";
   if (!["vercel", "cloudflare", "none"].includes(trustedProxyMode)) {
     throw new Error("TRUSTED_PROXY_MODE must be vercel, cloudflare, or none");

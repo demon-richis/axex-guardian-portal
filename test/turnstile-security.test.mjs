@@ -24,6 +24,7 @@ const migrationFiles = [
   "0005_turnstile_challenge_timing.sql",
   "0006_shared_rate_limits_and_ip_cache.sql",
   "0007_lock_legacy_exhausted_verification_state.sql",
+  "0008_bot_case_codes.sql",
 ];
 const context = {
   token: "verification-token",

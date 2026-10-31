@@ -37,6 +37,7 @@ export const verifyTokens = pgTable(
     used: boolean("used").default(false),
     status: text("status").default("pending").notNull(),
     referenceId: text("reference_id"),
+    caseCode: text("case_code"),
     challengeId: text("challenge_id"),
     challengeAnswerHash: text("challenge_answer_hash"),
     challengePrompt: text("challenge_prompt"),
@@ -69,6 +70,9 @@ export const verifyTokens = pgTable(
     uniqueIndex("verify_tokens_reference_id_unique_idx")
       .on(table.referenceId)
       .where(sql`${table.referenceId} is not null`),
+    uniqueIndex("verify_tokens_guild_case_code_unique_idx")
+      .on(table.guildId, table.caseCode)
+      .where(sql`${table.caseCode} is not null`),
   ],
 );
 

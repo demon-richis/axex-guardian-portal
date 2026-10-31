@@ -83,6 +83,8 @@ export const Route = createFileRoute("/api/verify/$token")({
               attempts,
               failureReason: row.failureReason,
               referenceId: state?.lastReferenceId ?? row.referenceId,
+              caseCode: row.caseCode,
+              guildName: row.guildName,
             });
           }
           if (state?.cooldownUntil && state.cooldownUntil.getTime() > Date.now()) {
@@ -93,6 +95,8 @@ export const Route = createFileRoute("/api/verify/$token")({
               cooldownUntil: state.cooldownUntil.toISOString(),
               failureReason: row.failureReason,
               referenceId: state.lastReferenceId ?? row.referenceId,
+              caseCode: row.caseCode,
+              guildName: row.guildName,
             });
           }
           if (row.used) return Response.json({ valid: false, reason: "used" });

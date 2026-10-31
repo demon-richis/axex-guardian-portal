@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { and, eq, gt, inArray } from "drizzle-orm";
 import { z } from "zod";
+import { CASE_CODE_PATTERN, isCaseCodeCollision } from "../../lib/case-code.server.ts";
 import { isReferenceIdCollision } from "../../lib/reference-id.server.ts";
 import type { auditLogs, verificationState, verifyTokens } from "../../lib/db/schema.ts";
 import type { getDb } from "../../lib/db/client.server.ts";
@@ -20,6 +21,7 @@ const Body = z.object({
   guildName: z.string().max(200).optional(),
   guildMemberCount: z.number().int().nonnegative().optional(),
   expiresAt: z.string().datetime({ offset: true }),
+  caseCode: z.string().regex(CASE_CODE_PATTERN).optional(),
 });
 
 function safeFailureDetails(stage: string, error: unknown) {
@@ -63,7 +65,8 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
     const db = dependencies.getDb();
     const now = new Date();
 
-    const { token, userId, guildId, guildName, guildMemberCount, expiresAt } = parsed.data;
+    const { token, userId, guildId, guildName, guildMemberCount, expiresAt, caseCode } =
+      parsed.data;
     stage = "verification_state_lookup";
     const state = (
       await db
@@ -98,6 +101,7 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
       .select({
         token: dependencies.verifyTokens.token,
         referenceId: dependencies.verifyTokens.referenceId,
+        caseCode: dependencies.verifyTokens.caseCode,
       })
       .from(dependencies.verifyTokens)
       .where(
@@ -115,6 +119,7 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
         reused: true,
         token: active[0].token,
         referenceId: active[0].referenceId,
+        caseCode: active[0].caseCode,
       });
     }
 
@@ -135,11 +140,13 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
             used: false,
             status: "pending",
             referenceId,
+            caseCode: caseCode ?? null,
           })
           .onConflictDoNothing({ target: dependencies.verifyTokens.token })
           .returning({
             token: dependencies.verifyTokens.token,
             referenceId: dependencies.verifyTokens.referenceId,
+            caseCode: dependencies.verifyTokens.caseCode,
           });
         if (inserted[0]) {
           await db
@@ -157,6 +164,7 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
             success: true,
             token,
             referenceId: inserted[0].referenceId,
+            caseCode: inserted[0].caseCode,
           });
         }
 
@@ -165,6 +173,7 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
           await db
             .select({
               referenceId: dependencies.verifyTokens.referenceId,
+              caseCode: dependencies.verifyTokens.caseCode,
               userId: dependencies.verifyTokens.userId,
               guildId: dependencies.verifyTokens.guildId,
               expiresAt: dependencies.verifyTokens.expiresAt,
@@ -185,6 +194,7 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
             reused: true,
             token,
             referenceId: existingToken.referenceId,
+            caseCode: existingToken.caseCode,
           });
         }
         return Response.json(
@@ -192,6 +202,9 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
           { status: 409 },
         );
       } catch (error) {
+        if (isCaseCodeCollision(error)) {
+          return Response.json({ error: "case_code_conflict" }, { status: 409 });
+        }
         if (isReferenceIdCollision(error)) continue;
         return failedResponse(stage, error);
       }

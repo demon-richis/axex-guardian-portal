@@ -43,6 +43,7 @@ export const Route = createFileRoute("/api/verify/pending")({
               failureReason: verifyTokens.failureReason,
               expiresAt: verifyTokens.expiresAt,
               referenceId: verifyTokens.referenceId,
+              caseCode: verifyTokens.caseCode,
             })
             .from(verifyTokens)
             .where(
@@ -77,6 +78,7 @@ export const Route = createFileRoute("/api/verify/pending")({
             cooldownUntil: state?.cooldownUntil?.toISOString() ?? null,
             failureReason: row?.failureReason ?? null,
             referenceId: state?.lastReferenceId ?? row?.referenceId ?? null,
+            caseCode: row?.caseCode ?? null,
           });
         } catch (error) {
           console.error("[verify/pending] Error:", error instanceof Error ? error.name : "unknown");

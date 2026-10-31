@@ -27,6 +27,7 @@ const migrationFiles = [
   "0005_turnstile_challenge_timing.sql",
   "0006_shared_rate_limits_and_ip_cache.sql",
   "0007_lock_legacy_exhausted_verification_state.sql",
+  "0008_bot_case_codes.sql",
 ];
 
 async function applyMigration(client, name) {
@@ -110,6 +111,7 @@ test("durable-state migration backfills only from each user's latest token", asy
   try {
     for (const migration of migrationFiles.slice(0, 4)) await applyMigration(client, migration);
     await applyMigration(client, "0005_turnstile_challenge_timing.sql");
+    await applyMigration(client, "0008_bot_case_codes.sql");
     const db = drizzle(client, { schema });
     const base = new Date(Date.now() - 2_000);
     const future = new Date(Date.now() + 86_400_000);
@@ -172,8 +174,10 @@ test("durable-state migration backfills only from each user's latest token", asy
 });
 
 test("migration hardens legacy rows with three attempts into durable locks", async () => {
-  const { client, db } = await freshDb({ through: migrationFiles.length - 1 });
+  // 0008 only adds an independent column; apply it first so the current schema can seed rows.
+  const { client, db } = await freshDb({ through: 7 });
   try {
+    await applyMigration(client, "0008_bot_case_codes.sql");
     const seed = await seedToken(db, {
       token: "legacy-three-failures",
     });
@@ -553,6 +557,10 @@ test("correct challenge proof is identity-bound and atomically creates one final
   const { client, db } = await freshDb();
   try {
     const seed = await seedToken(db);
+    await db
+      .update(schema.verifyTokens)
+      .set({ caseCode: "48151623" })
+      .where(eq(schema.verifyTokens.token, seed.token));
     const { challenge, correctAnswer } = await challengeFor(db, seed.token);
     const identityMismatch = await submitVerificationChallenge(
       db,
@@ -582,6 +590,8 @@ test("correct challenge proof is identity-bound and atomically creates one final
     assert.equal(queued[0].referenceId, seed.referenceId);
     assert.equal(queued[0].payload.passed, true);
     assert.equal(queued[0].payload.discordId, seed.discordId);
+    assert.equal(queued[0].payload.caseCode, "48151623");
+    assert.equal(accepted.caseCode, "48151623");
   } finally {
     await client.close();
   }

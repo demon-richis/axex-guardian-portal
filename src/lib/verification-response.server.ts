@@ -24,6 +24,7 @@ export function publicVerificationSummary(
     expiresAt: row.expiresAt.toISOString(),
     status: row.status,
     referenceId: row.referenceId,
+    caseCode: row.caseCode,
     attempts,
     failureReason: row.failureReason,
     botAcknowledged: Boolean(row.botAcknowledgedAt),

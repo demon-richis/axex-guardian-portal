@@ -51,6 +51,7 @@ type TokenInfo = {
   completed?: boolean;
   pendingPassed?: boolean;
   referenceId?: string | null;
+  caseCode?: string | null;
   attempts?: number;
   cooldownUntil?: string | null;
   failureReason?: string | null;
@@ -551,6 +552,7 @@ function VerifyPage() {
         attempts?: number;
         status?: string;
         referenceId?: string | null;
+        caseCode?: string | null;
         cooldownUntil?: string | null;
         failureReason?: string | null;
         locked?: boolean;
@@ -689,7 +691,7 @@ function VerifyPage() {
               <ErrorAlert
                 title={ERRORS[errorKind][0]}
                 desc={ERRORS[errorKind][1]}
-                referenceId={info?.referenceId ?? null}
+                referenceId={info?.caseCode ?? info?.referenceId ?? null}
                 onRetry={
                   errorKind === "network" ||
                   errorKind === "captchaUnavailable" ||
@@ -739,8 +741,11 @@ function VerifyPage() {
                   {formatCountdown(cooldownSeconds)}
                 </p>
               </div>
-              {info?.referenceId && (
-                <ReferenceId referenceId={info.referenceId} className="justify-center" />
+              {(info?.caseCode ?? info?.referenceId) && (
+                <ReferenceId
+                  referenceId={(info.caseCode ?? info.referenceId) as string}
+                  className="justify-center"
+                />
               )}
               {cooldownSeconds === 0 ? (
                 <PrimaryButton onClick={() => window.location.reload()}>
@@ -856,8 +861,11 @@ function VerifyPage() {
               <p className="text-sm leading-6 text-muted-foreground">
                 We are notifying Discord now. This usually takes a few seconds. Keep this tab open.
               </p>
-              {info.referenceId && (
-                <ReferenceId referenceId={info.referenceId} className="justify-center" />
+              {(info.caseCode ?? info.referenceId) && (
+                <ReferenceId
+                  referenceId={(info.caseCode ?? info.referenceId) as string}
+                  className="justify-center"
+                />
               )}
             </motion.div>
           )}
@@ -900,8 +908,11 @@ function VerifyPage() {
               <p className="mt-1 text-xs text-[var(--faint)]">
                 Access has been granted to your account.
               </p>
-              {info.referenceId && (
-                <ReferenceId referenceId={info.referenceId} className="mt-2 justify-center" />
+              {(info.caseCode ?? info.referenceId) && (
+                <ReferenceId
+                  referenceId={(info.caseCode ?? info.referenceId) as string}
+                  className="mt-2 justify-center"
+                />
               )}
               <div className="mt-5 flex w-full gap-2">
                 <a
@@ -1482,11 +1493,12 @@ function ReferenceId({ referenceId, className = "" }: { referenceId: string; cla
   return (
     <div className={`flex flex-wrap items-center gap-2 text-xs text-muted-foreground ${className}`}>
       <span className="min-w-0 break-all">
-        Reference: <strong className="min-w-0 break-all text-foreground">{referenceId}</strong>
+        {/^[0-9]{8}$/.test(referenceId) ? "Case ID" : "Reference"}:{" "}
+        <strong className="min-w-0 break-all text-foreground">{referenceId}</strong>
       </span>
       <button
         type="button"
-        aria-label={`Copy reference ID ${referenceId}`}
+        aria-label={`Copy ${/^[0-9]{8}$/.test(referenceId) ? "case" : "reference"} ID ${referenceId}`}
         onClick={() => void copy()}
         className="min-h-11 shrink-0 rounded-md px-2 font-semibold text-[var(--green-text)] underline underline-offset-2"
       >

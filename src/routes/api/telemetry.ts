@@ -144,9 +144,11 @@ export const Route = createFileRoute("/api/telemetry")({
             });
           }
           if (parsed.data.event === "page_opened" || parsed.data.event === "oauth_completed") {
+            const { snowflakeToTimestamp } = await import("@/lib/discord-snowflake");
             const analysis = await analyzePortalUser(userId, row.guildId, {
               username: row.discordUsername,
               avatar: row.discordAvatar,
+              createdTimestamp: snowflakeToTimestamp(userId),
             });
             if (analysis) {
               await notifyBotIntelligence(

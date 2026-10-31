@@ -36,6 +36,7 @@ export type SubmissionResult = {
   passed?: boolean;
   status?: string;
   referenceId?: string | null;
+  caseCode?: string | null;
   attempts?: number;
   cooldownUntil?: string | null;
   failureReason?: string | null;
@@ -78,6 +79,7 @@ export async function submitVerificationChallenge(
       passed: Boolean(row.completedAt),
       status: row.status,
       referenceId: row.referenceId,
+      caseCode: row.caseCode,
       attempts: state.attempts,
       cooldownUntil: state.cooldownUntil?.toISOString() ?? null,
       failureReason: row.failureReason,
@@ -215,6 +217,7 @@ export async function submitVerificationChallenge(
   const callbackPayload = {
     guildId: row.guildId,
     referenceId: row.referenceId,
+    caseCode: row.caseCode ?? null,
     userId: row.discordId,
     discordId: row.discordId,
     discordTag: safeTag,
@@ -398,6 +401,7 @@ export async function submitVerificationChallenge(
     passed: finalPassed,
     status: callbackStatus,
     referenceId: row.referenceId,
+    caseCode: row.caseCode ?? null,
     attempts: committedAttempts,
     cooldownUntil: committedCooldownUntil?.toISOString() ?? null,
     failureReason: reason,

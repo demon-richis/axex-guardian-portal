@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { and, eq, gt } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { createHash } from "node:crypto";
 
 export const Route = createFileRoute("/api/check-ip")({
@@ -22,7 +22,7 @@ export const Route = createFileRoute("/api/check-ip")({
           const token = url.searchParams.get("token") ?? "";
           if (!token || token.length > 200) {
             return Response.json(
-              { status: "unavailable", isVPN: false, type: null },
+              { status: "unavailable", isVPN: false, type: null, error: "invalid_request" },
               { status: 400 },
             );
           }
@@ -30,20 +30,44 @@ export const Route = createFileRoute("/api/check-ip")({
           const now = new Date();
           const tokenRow = (
             await db
-              .select({ userId: verifyTokens.userId, discordId: verifyTokens.discordId })
+              .select({ userId: verifyTokens.userId, discordId: verifyTokens.discordId, used: verifyTokens.used, expiresAt: verifyTokens.expiresAt, status: verifyTokens.status })
               .from(verifyTokens)
-              .where(
-                and(
-                  eq(verifyTokens.token, token),
-                  eq(verifyTokens.used, false),
-                  gt(verifyTokens.expiresAt, now),
-                ),
-              )
+              .where(eq(verifyTokens.token, token))
               .limit(1)
           )[0];
-          if (!tokenRow || !tokenRow.discordId || tokenRow.discordId !== tokenRow.userId) {
+          if (!tokenRow) {
             return Response.json(
-              { status: "unavailable", isVPN: false, type: null },
+              { status: "unavailable", isVPN: false, type: null, error: "invalid_token" },
+              { status: 400 },
+            );
+          }
+          if (tokenRow.used || tokenRow.status === "completed" || tokenRow.status === "bot_update_pending") {
+            return Response.json(
+              { status: "unavailable", isVPN: false, type: null, error: "used" },
+              { status: 400 },
+            );
+          }
+          if (tokenRow.expiresAt.getTime() <= now.getTime()) {
+            return Response.json(
+              { status: "unavailable", isVPN: false, type: null, error: "expired" },
+              { status: 400 },
+            );
+          }
+          if (tokenRow.status === "locked") {
+            return Response.json(
+              { status: "unavailable", isVPN: false, type: null, error: "verification_locked" },
+              { status: 429 },
+            );
+          }
+          if (!tokenRow.discordId) {
+            return Response.json(
+              { status: "unavailable", isVPN: false, type: null, error: "identity_required" },
+              { status: 403 },
+            );
+          }
+          if (tokenRow.discordId !== tokenRow.userId) {
+            return Response.json(
+              { status: "unavailable", isVPN: false, type: null, error: "identity_mismatch" },
               { status: 403 },
             );
           }
@@ -51,7 +75,7 @@ export const Route = createFileRoute("/api/check-ip")({
           const ipLimit = await consumeConfiguredRateLimit(db, `check-ip:ip:${ip}`, 12, 60_000);
           if (!ipLimit.allowed) {
             return Response.json(
-              { status: "unavailable", isVPN: false, type: null },
+              { status: "unavailable", isVPN: false, type: null, error: "rate_limited" },
               { status: 429, headers: { "Retry-After": String(ipLimit.retryAfterSeconds) } },
             );
           }
@@ -70,7 +94,12 @@ export const Route = createFileRoute("/api/check-ip")({
           }
           const result = await checkIpCached(db, ip === "unknown" ? "" : ip);
           return Response.json(
-            { status: result.status, isVPN: result.isVPN, type: result.type },
+            {
+              status: result.status,
+              isVPN: result.isVPN,
+              type: result.type,
+              ...(result.status === "unavailable" ? { error: "network_check_unavailable" } : {}),
+            },
             {
               status: result.status === "unavailable" ? 503 : 200,
               headers: { "cache-control": "no-store" },
@@ -79,7 +108,7 @@ export const Route = createFileRoute("/api/check-ip")({
         } catch (error) {
           console.error("[check-ip] Failed:", error instanceof Error ? error.name : "unknown");
           return Response.json(
-            { status: "unavailable", isVPN: false, type: null },
+            { status: "unavailable", isVPN: false, type: null, error: "network_check_unavailable" },
             { status: 503, headers: { "cache-control": "no-store" } },
           );
         }

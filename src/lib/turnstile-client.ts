@@ -52,6 +52,7 @@ export function mapTurnstileError(
   switch (error) {
     case "invalid_request":
     case "cross_origin_request":
+    case "turnstile_invalid":
       return {
         kind: "turnstileInvalidRequest",
         title: TURNSTILE_ERROR_TEXT.turnstileInvalidRequest[0],
@@ -65,6 +66,7 @@ export function mapTurnstileError(
         retryAfterSeconds: waitSeconds,
       };
     case "verification_unavailable":
+    case "turnstile_unavailable":
       return {
         kind: "captchaUnavailable",
         title: TURNSTILE_ERROR_TEXT.captchaUnavailable[0],

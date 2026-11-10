@@ -16,6 +16,7 @@ test("OAuth callback failures map to distinct user-facing reasons", () => {
   assert.equal(mapOAuthErrorCode("oauth_token_expired"), "authTokenExpired");
   assert.equal(mapOAuthErrorCode("oauth_token_used"), "authTokenUsed");
   assert.equal(mapOAuthErrorCode("oauth_configuration_error"), "authConfiguration");
+  assert.equal(mapOAuthErrorCode("oauth_verification_locked"), "lockout");
 });
 
 test("only explicit Discord access_denied is treated as cancellation", () => {

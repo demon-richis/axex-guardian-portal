@@ -312,7 +312,22 @@ test("OAuth identity must equal the bot-issued Discord user and cannot be reboun
       username: "intended-user",
       avatar: null,
     });
-    assert.deepEqual(expired, { success: false, reason: "expired_or_used" });
+    assert.deepEqual(expired, { success: false, reason: "expired_token" });
+
+    const usedSeed = await seedToken(db, {
+      token: "used-oauth-token",
+      userId: targetId,
+    });
+    await db
+      .update(schema.verifyTokens)
+      .set({ used: true, status: "completed" })
+      .where(eq(schema.verifyTokens.token, usedSeed.token));
+    const used = await bindOAuthIdentity(db, usedSeed.token, {
+      id: targetId,
+      username: "intended-user",
+      avatar: null,
+    });
+    assert.deepEqual(used, { success: false, reason: "already_used" });
 
     const legacyMismatch = await seedToken(db, {
       token: "legacy-mismatched-oauth",

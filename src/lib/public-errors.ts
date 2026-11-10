@@ -72,6 +72,7 @@ export function mapVerificationErrorCode(code: string | null | undefined): Publi
     case "challenge_unavailable":
     case "outbox_unavailable":
     case "service_unavailable":
+    case "error":
       return "serviceUnavailable";
     case "turnstile_unavailable":
       return "captchaUnavailable";

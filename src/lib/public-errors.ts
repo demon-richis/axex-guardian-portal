@@ -22,6 +22,7 @@ const OAUTH_ERROR_KINDS: Record<string, PublicErrorKind> = {
   oauth_token_used: "authTokenUsed",
   oauth_token_invalid: "authTokenInvalid",
   oauth_verification_locked: "lockout",
+  oauth_verification_locked: "lockout",
   oauth_configuration_error: "authConfiguration",
   oauth_rate_limited: "authRateLimited",
   oauth_service_unavailable: "authServiceUnavailable",

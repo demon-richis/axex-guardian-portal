@@ -33,6 +33,8 @@ test("verification API failures map to their actual safe category", () => {
   assert.equal(mapVerificationErrorCode("session_required"), "authSessionMismatch");
   assert.equal(mapVerificationErrorCode("rate_limited"), "rateLimited");
   assert.equal(mapVerificationErrorCode("verification_unavailable"), "serviceUnavailable");
+  assert.equal(mapVerificationErrorCode("error"), "serviceUnavailable");
+  assert.equal(mapVerificationErrorCode("verification_locked"), "lockout");
   assert.equal(mapVerificationErrorCode("expired"), "tokenExpired");
   assert.equal(mapVerificationErrorCode("used"), "tokenUsed");
   assert.equal(mapVerificationErrorCode("turnstile_invalid"), "turnstileInvalidRequest");

@@ -13,7 +13,46 @@ type DiscordIdentity = {
 
 type IdentityBindingResult =
   | { success: true }
-  | { success: false; reason: "invalid_token" | "expired_or_used" | "identity_mismatch" };
+  | {
+      success: false;
+      reason:
+        | "invalid_token"
+        | "expired_token"
+        | "already_used"
+        | "identity_mismatch"
+        | "verification_locked"
+        | "verification_inactive";
+    };
+
+function bindingFailure(
+  row: {
+    userId: string;
+    discordId: string | null;
+    expiresAt: Date;
+    used: boolean;
+    status: string;
+  } | undefined,
+  identityId: string,
+  now: Date,
+): IdentityBindingResult | null {
+  if (!row) return { success: false, reason: "invalid_token" };
+  if (row.used || row.status === "completed" || row.status === "bot_update_pending") {
+    return { success: false, reason: "already_used" };
+  }
+  if (row.expiresAt.getTime() <= now.getTime()) {
+    return { success: false, reason: "expired_token" };
+  }
+  if (row.status === "locked") {
+    return { success: false, reason: "verification_locked" };
+  }
+  if (identityId !== row.userId || (row.discordId && row.discordId !== identityId)) {
+    return { success: false, reason: "identity_mismatch" };
+  }
+  if (!["pending", "failed"].includes(row.status)) {
+    return { success: false, reason: "verification_inactive" };
+  }
+  return null;
+}
 
 export async function bindOAuthIdentity(
   db: PortalDb,
@@ -38,17 +77,8 @@ export async function bindOAuthIdentity(
       .where(eq(verifyTokens.token, token))
       .limit(1)
   )[0];
-  if (!row) return { success: false, reason: "invalid_token" };
-  if (
-    row.used ||
-    row.expiresAt.getTime() <= now.getTime() ||
-    !["pending", "failed"].includes(row.status)
-  ) {
-    return { success: false, reason: "expired_or_used" };
-  }
-  if (identity.id !== row.userId || (row.discordId && row.discordId !== identity.id)) {
-    return { success: false, reason: "identity_mismatch" };
-  }
+  const initialFailure = bindingFailure(row, identity.id, now);
+  if (initialFailure) return initialFailure;
 
   const updated = await db
     .update(verifyTokens)
@@ -70,5 +100,26 @@ export async function bindOAuthIdentity(
     )
     .returning({ token: verifyTokens.token });
 
-  return updated.length ? { success: true } : { success: false, reason: "expired_or_used" };
+  if (updated.length) return { success: true };
+
+  const latest = (
+    await db
+      .select({
+        userId: verifyTokens.userId,
+        discordId: verifyTokens.discordId,
+        expiresAt: verifyTokens.expiresAt,
+        used: verifyTokens.used,
+        status: verifyTokens.status,
+      })
+      .from(verifyTokens)
+      .where(eq(verifyTokens.token, token))
+      .limit(1)
+  )[0];
+
+  return (
+    bindingFailure(latest, identity.id, now) ?? {
+      success: false,
+      reason: "verification_inactive",
+    }
+  );
 }

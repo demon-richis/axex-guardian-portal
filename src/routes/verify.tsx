@@ -73,8 +73,8 @@ const ERRORS: Record<ErrorKind, [string, string]> = {
   timeout: ["Time Expired", "You did not complete verification in time. Contact server staff."],
   lockout: ["Verification Locked", "Too many failed attempts — contact server staff"],
   auth: [
-    "Discord authorization cancelled",
-    "No result was submitted. You can try authorizing again.",
+    "Discord authorization could not be completed",
+    "Axex could not determine the exact reason. Try again, or contact server staff with your Case ID.",
   ],
   network: [
     "Security check unavailable",

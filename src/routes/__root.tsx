@@ -33,9 +33,30 @@ function NotFoundComponent() {
   );
 }
 
+function describePageError(error: unknown): string {
+  if (error && typeof error === "object") {
+    const detail = error as { status?: unknown; statusCode?: unknown; name?: unknown };
+    const status = detail.status ?? detail.statusCode;
+    if (status === 401 || status === 403)
+      return "This request was rejected because Axex could not confirm the required access or verification session. Reopen the original verification link and try again.";
+    if (status === 404)
+      return "The requested page or resource was not found. Check the link or return to the verification page.";
+    if (status === 408 || status === 504 || detail.name === "TimeoutError")
+      return "A required request timed out before the page could finish loading. Check your connection and retry.";
+    if (status === 429)
+      return "Axex received too many requests. Wait a moment before trying again.";
+    if (status === 503)
+      return "A required Axex service is temporarily unavailable. No verification result was submitted; try again shortly.";
+    if (typeof status === "number" && status >= 500)
+      return "The server failed while preparing this page. Its technical details were recorded securely; try again shortly.";
+  }
+  return "An unexpected application error stopped this page. Axex could not safely identify a more specific cause. Try again once, then contact server staff if it continues.";
+}
+
 function ErrorComponent({ error, reset }: { error: unknown; reset: () => void }) {
   console.error(error);
   const router = useRouter();
+  const description = describePageError(error);
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
@@ -44,7 +65,7 @@ function ErrorComponent({ error, reset }: { error: unknown; reset: () => void })
           This page didn't load
         </h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Something went wrong on our end. You can try refreshing or head back home.
+          {description}
         </p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
           <button

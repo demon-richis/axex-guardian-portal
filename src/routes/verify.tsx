@@ -1,5 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { mapTurnstileError, shouldSubmitTurnstileToken } from "../lib/turnstile-client";
+import {
+  isRetryableOAuthError,
+  mapOAuthErrorCode,
+  mapVerificationErrorCode,
+  type PublicErrorKind,
+} from "../lib/public-errors";
 import { loadingViewMode, stageStates } from "../lib/loading-stages";
 import { AnimatePresence, motion } from "framer-motion";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -58,20 +64,7 @@ type TokenInfo = {
   botAcknowledged?: boolean;
   botError?: string | null;
 };
-type ErrorKind =
-  | "invalid"
-  | "used"
-  | "timeout"
-  | "lockout"
-  | "auth"
-  | "network"
-  | "captchaUnavailable"
-  | "turnstileRateLimited"
-  | "turnstileInvalidRequest"
-  | "turnstileIdentityMismatch"
-  | "turnstileExpired"
-  | "bot"
-  | "generic";
+type ErrorKind = PublicErrorKind;
 type Phase = "loading" | "auth" | "vpn" | "captcha" | "cooldown" | "pending" | "done" | "error";
 
 const ERRORS: Record<ErrorKind, [string, string]> = {
@@ -111,7 +104,29 @@ const ERRORS: Record<ErrorKind, [string, string]> = {
     "Discord update is taking longer than usual",
     "Your verification was accepted, but Discord has not confirmed the role update yet. Contact a moderator with your reference code if the role does not appear shortly.",
   ],
-  generic: ["Something went wrong", "Please try again or contact server staff."],
+  generic: ["Unexpected verification error", "Axex could not identify the exact cause. Try again, or contact server staff with your Case ID."],
+  turnstileRetry: ["Check again", "Please complete the security check again."],
+  authCancelled: ["Discord authorization cancelled", "Discord reported that authorization was denied. No verification result was submitted. You can try authorizing again."],
+  authStateInvalid: ["Sign-in session expired", "Axex could not validate the sign-in session. Restart Discord authorization from your original verification link."],
+  authCodeMissing: ["Discord sign-in response incomplete", "Discord did not return the temporary authorization code. Start authorization again."],
+  authProviderRejected: ["Discord authorization failed", "Discord could not complete this authorization request. Try again later."],
+  authTokenExchangeFailed: ["Discord sign-in could not be completed", "Discord rejected the temporary sign-in response. Restart authorization. If this continues, contact server staff."],
+  authProfileLookupFailed: ["Could not load Discord account", "Discord authorization completed, but Axex could not retrieve your Discord profile. Try again."],
+  authIdentityMismatch: ["Wrong Discord account", "This verification link was created for a different Discord account. Switch to the intended Discord account in your browser, then authorize again."],
+  authTokenExpired: ["Verification link expired", "This verification link has expired. Ask a server administrator to issue a new verification link."],
+  authTokenUsed: ["Verification link already used", "This verification link has already been completed or consumed. Ask server staff for a new link if you still need access."],
+  authTokenInvalid: ["Invalid verification link", "This link does not match an active verification request. Use the latest link sent by your Discord server."],
+  authConfiguration: ["Axex sign-in is misconfigured", "The portal could not start Discord authorization because its configuration is incomplete. Contact server staff."],
+  authRateLimited: ["Too many sign-in attempts", "Please wait a moment before starting Discord authorization again."],
+  authServiceUnavailable: ["Axex verification temporarily unavailable", "A required service did not respond. No verification result was submitted. Try again shortly."],
+  authSessionMismatch: ["Verification session mismatch", "The browser session could not be matched to this verification request. Reopen the original verification link and authorize the intended Discord account."],
+  authUnknown: ["Discord authorization could not be completed", "Axex could not determine the exact reason. Try authorizing again; if it happens again, share your Case ID with server staff."],
+  rateLimited: ["Too many requests", "Please wait a moment before retrying this verification step."],
+  serviceUnavailable: ["Verification service unavailable", "A required verification service is temporarily unavailable. Your verification could not continue. Try again shortly."],
+  sessionMismatch: ["Verification session mismatch", "The Discord account or browser session no longer matches this verification request. Restart Discord authorization from the original link."],
+  invalidRequest: ["Security request was rejected", "The verification request was incomplete or invalid. Refresh the original verification page and try again."],
+  tokenExpired: ["Verification link expired", "This verification link has expired. Ask server staff to send you a new link."],
+  tokenUsed: ["Verification link already used", "This verification link has already been used. Ask server staff for a new link if you still need access."],
 };
 
 function track(token: string, event: Parameters<typeof telemetryEvent>[1], detail?: string): void {
@@ -320,12 +335,20 @@ function VerifyPage() {
           ...(signal ? { signal } : {}),
         });
         console.log("[verify] IP check response:", response.status);
-        if (!response.ok) throw new Error(`IP check failed with status ${response.status}`);
-        const result = (await response.json()) as {
+        const result = (await response.json().catch(() => null)) as {
           status?: string;
           isVPN?: boolean;
           type?: string | null;
-        };
+          error?: string;
+        } | null;
+        if (!response.ok) {
+          fail(mapVerificationErrorCode(result?.error ?? (response.status >= 500 ? "service_unavailable" : "network_check_unavailable")));
+          return;
+        }
+        if (!result) {
+          fail("network");
+          return;
+        }
         console.log("[verify] IP check completed:", {
           status: result.status,
           isVPN: result.isVPN === true,
@@ -343,16 +366,15 @@ function VerifyPage() {
             body: JSON.stringify({ token }),
             cache: "no-store",
           });
-          if (!challengeResponse.ok) {
-            throw new Error(`Challenge request failed with status ${challengeResponse.status}`);
-          }
-          const challengeResult = (await challengeResponse.json()) as {
+          const challengeResult = (await challengeResponse.json().catch(() => null)) as {
             success?: boolean;
             challenge?: Challenge;
             siteKey?: string;
-          };
-          if (!challengeResult.success || !challengeResult.challenge) {
-            throw new Error("The server did not issue a verification challenge");
+            error?: string;
+          } | null;
+          if (!challengeResponse.ok || !challengeResult?.success || !challengeResult.challenge) {
+            fail(mapVerificationErrorCode(challengeResult?.error ?? (challengeResponse.status >= 500 ? "challenge_unavailable" : "invalid_request")));
+            return;
           }
           setChallenge(challengeResult.challenge);
           setTurnstileSiteKey(challengeResult.siteKey ?? "");
@@ -403,7 +425,7 @@ function VerifyPage() {
       const id = window.setTimeout(() => setPhase("auth"), 400);
       return () => window.clearTimeout(id);
     }
-    if (!token) return fail("invalid");
+    if (!token) return fail(error ? mapOAuthErrorCode(error) : "invalid");
     const controller = new AbortController();
     let active = true;
     const minimumPreparation = oauthReturn
@@ -414,7 +436,9 @@ function VerifyPage() {
         console.log("[verify] Validating verification token");
         const res = await fetch(`/api/verify/${encodeURIComponent(token)}`);
         console.log("[verify] Token validation response:", res.status);
-        if (!res.ok) throw new Error(`Token validation failed with status ${res.status}`);
+        if (!res.ok) {
+          return fail(res.status === 429 ? "rateLimited" : res.status >= 500 ? "serviceUnavailable" : "invalid");
+        }
         const data = (await res.json()) as TokenInfo & { valid: boolean; reason?: string };
         console.log("[verify] Token validation result:", {
           valid: data.valid,
@@ -430,15 +454,7 @@ function VerifyPage() {
             setPhase("cooldown");
             return;
           }
-          return fail(
-            data.reason === "lockout"
-              ? "lockout"
-              : data.reason === "used"
-                ? "used"
-                : data.reason === "error"
-                  ? "generic"
-                  : "invalid",
-          );
+          return fail(mapVerificationErrorCode(data.reason ?? "invalid"));
         }
         setInfo(data);
         setAttempts(data.attempts ?? 0);
@@ -454,13 +470,13 @@ function VerifyPage() {
           else fail(data.attempts !== undefined && data.attempts >= 3 ? "lockout" : "generic");
           return;
         }
-        if (error) return fail(error === "auth" ? "auth" : "generic");
+        if (error) return fail(mapOAuthErrorCode(error));
         if (auth && data.discordUser) {
           console.log("[verify] OAuth complete: identity found; moving from Step 1 to Step 2");
           await runIpCheck(controller.signal);
         } else if (auth) {
-          console.error("[verify] OAuth completed but token has no stored Discord identity");
-          fail(error === "auth" ? "auth" : "generic");
+          console.error("[verify] OAuth returned without a bound Discord identity");
+          fail("authSessionMismatch");
         } else {
           console.log("[verify] OAuth not complete; showing Step 1");
           setPhase("auth");
@@ -468,7 +484,7 @@ function VerifyPage() {
       } catch (error) {
         if (!active) return;
         console.error("[verify] Initialization failed:", error);
-        fail("generic");
+        fail("serviceUnavailable");
       }
     })();
     return () => {
@@ -540,12 +556,12 @@ function VerifyPage() {
         console.error("[verify] Callback request failed:", requestError);
         return null;
       });
-      if (!response) return null;
+      if (!response) return { success: false, error: "network_request_failed" };
       console.log("[verify] Callback response:", response.status);
       track(token, response.ok ? "callback_sent" : "callback_failed");
       return (await response.json().catch((parseError: unknown) => {
         console.error("[verify] Could not parse callback response:", parseError);
-        return null;
+        return { success: false, error: "response_unreadable" };
       })) as {
         success?: boolean;
         passed?: boolean;
@@ -589,7 +605,8 @@ function VerifyPage() {
       );
 
       const mappedError = mapTurnstileError(result?.error, result?.retryAfterSeconds);
-      if (mappedError.kind === "turnstileRetry") return "retry";
+      const publicErrorKind = mapVerificationErrorCode(result?.error);
+      if (publicErrorKind === "turnstileRetry" || mappedError.kind === "turnstileRetry") return "retry";
       const serverAttempts = result?.attempts ?? attempts;
       if (result?.success && serverAttempts > 0) {
         setAttempts(serverAttempts);
@@ -630,8 +647,8 @@ function VerifyPage() {
         fail("captchaUnavailable");
         return;
       }
-      if (result?.error === "network_check_unavailable") {
-        fail("network");
+      if (publicErrorKind !== "generic") {
+        fail(publicErrorKind);
         return;
       }
       fail("generic");
@@ -692,18 +709,23 @@ function VerifyPage() {
                 title={ERRORS[errorKind][0]}
                 desc={ERRORS[errorKind][1]}
                 referenceId={info?.caseCode ?? info?.referenceId ?? null}
+                retryLabel={isRetryableOAuthError(errorKind) ? "Try Discord again" : "Check again"}
                 onRetry={
-                  errorKind === "network" ||
-                  errorKind === "captchaUnavailable" ||
-                  errorKind === "turnstileRateLimited" ||
-                  errorKind === "turnstileInvalidRequest" ||
-                  errorKind === "turnstileIdentityMismatch" ||
-                  errorKind === "turnstileExpired"
-                    ? () => {
-                        setPhase("captcha");
-                        void runIpCheck();
-                      }
-                    : undefined
+                  isRetryableOAuthError(errorKind) && token
+                    ? () => window.location.assign(`/api/auth/discord?token=${encodeURIComponent(token)}`)
+                    : errorKind === "network" ||
+                        errorKind === "captchaUnavailable" ||
+                        errorKind === "serviceUnavailable" ||
+                        errorKind === "rateLimited" ||
+                        errorKind === "turnstileRateLimited" ||
+                        errorKind === "turnstileInvalidRequest" ||
+                        errorKind === "turnstileIdentityMismatch" ||
+                        errorKind === "turnstileExpired"
+                      ? () => {
+                          setPhase("captcha");
+                          void runIpCheck();
+                        }
+                      : undefined
                 }
               />
               {errorKind === "bot" && info?.botError && (
@@ -1394,11 +1416,13 @@ function ErrorAlert({
   desc,
   referenceId,
   onRetry,
+  retryLabel = "Check again",
 }: {
   title: string;
   desc: string;
   referenceId?: string | null;
   onRetry?: (() => void) | undefined;
+  retryLabel?: string;
 }) {
   return (
     <div className="flex flex-col items-center py-4 text-center">
@@ -1432,7 +1456,7 @@ function ErrorAlert({
             onClick={onRetry}
             className="mt-4 min-h-11 rounded-lg border border-[var(--red)]/30 px-3 text-xs font-semibold text-foreground hover:bg-[var(--red-soft)]"
           >
-            Check again
+            {retryLabel}
           </button>
         )}
         <a

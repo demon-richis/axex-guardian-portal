@@ -34,7 +34,11 @@ export async function checkIp(ip: string): Promise<{
   try {
     const key = process.env["PROXYCHECK_API_KEY"];
     const url = `https://proxycheck.io/v2/${encodeURIComponent(ip)}?vpn=1&asn=1${key ? `&key=${key}` : ""}`;
-    const res = await fetch(url);
+    const configuredTimeout = Number(process.env["PROXYCHECK_TIMEOUT_MS"]);
+    const timeoutMs = Number.isFinite(configuredTimeout)
+      ? Math.max(1_000, Math.min(configuredTimeout, 10_000))
+      : 4_000;
+    const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
     if (!res.ok) {
       console.error("[check-ip] Proxy lookup returned status:", res.status);
       return { status: "unavailable", isVPN: false, type: null, ip };

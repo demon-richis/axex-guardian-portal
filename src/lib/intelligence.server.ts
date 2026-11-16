@@ -10,6 +10,7 @@ type IntelligenceProfile = {
   username?: string | null;
   avatar?: string | null;
   createdTimestamp?: number | null;
+  ip?: string | null;
 };
 
 export type IntelligenceResult = {
@@ -62,6 +63,7 @@ export async function analyzePortalUser(
   if (profile.username) query.set("username", profile.username);
   if (profile.avatar) query.set("avatar", profile.avatar);
   if (profile.createdTimestamp) query.set("createdTimestamp", String(profile.createdTimestamp));
+  if (profile.ip) query.set("ip", profile.ip);
 
   const response = await intelligenceFetch(
     `/analyze/${encodeURIComponent(userId)}?${query.toString()}`,

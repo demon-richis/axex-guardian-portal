@@ -55,10 +55,15 @@ export const Route = createFileRoute("/api/telemetry")({
         ]);
         let db;
         let requestLimit;
+        const observedIp = clientIp(request) || null;
         try {
           db = getDb();
-          const ip = clientIp(request) || "unknown";
-          requestLimit = await consumeConfiguredRateLimit(db, `telemetry:ip:${ip}`, 60, 60_000);
+          requestLimit = await consumeConfiguredRateLimit(
+            db,
+            `telemetry:ip:${observedIp || "unknown"}`,
+            60,
+            60_000,
+          );
         } catch (error) {
           console.error(
             "[telemetry] Rate limit unavailable:",
@@ -149,6 +154,7 @@ export const Route = createFileRoute("/api/telemetry")({
               username: row.discordUsername,
               avatar: row.discordAvatar,
               createdTimestamp: snowflakeToTimestamp(userId),
+              ip: observedIp,
             });
             if (analysis) {
               await notifyBotIntelligence(

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { notifyBotIntelligence } from "../src/lib/intelligence.server.ts";
+import { analyzePortalUser, notifyBotIntelligence } from "../src/lib/intelligence.server.ts";
 
 const originalWebhookUrl = process.env.BOT_WEBHOOK_URL;
 const originalPortalKey = process.env.PORTAL_TO_BOT_KEY;
@@ -56,6 +56,19 @@ test("bot intelligence notifications include the verification reference ID", asy
   assert.equal(requestBody.referenceId, "AX-REFERENCE1");
 });
 
+test("portal intelligence analysis forwards the observed IP", async () => {
+  process.env.INTELLIGENCE_URL = "https://intelligence.test";
+  process.env.INTELLIGENCE_API_KEY = "intelligence-key";
+  let requestUrl;
+  globalThis.fetch = async (url) => {
+    requestUrl = new URL(url);
+    return Response.json({ riskScore: 1 });
+  };
+
+  await analyzePortalUser("user-1", "guild-1", { ip: "203.0.113.42" });
+  assert.equal(requestUrl.searchParams.get("ip"), "203.0.113.42");
+});
+
 test.after(() => {
   if (originalWebhookUrl === undefined) delete process.env.BOT_WEBHOOK_URL;
   else process.env.BOT_WEBHOOK_URL = originalWebhookUrl;
@@ -63,5 +76,7 @@ test.after(() => {
   else process.env.PORTAL_TO_BOT_KEY = originalPortalKey;
   if (originalLegacyKey === undefined) delete process.env.AXEX_BOT_API_KEY;
   else process.env.AXEX_BOT_API_KEY = originalLegacyKey;
+  delete process.env.INTELLIGENCE_URL;
+  delete process.env.INTELLIGENCE_API_KEY;
   globalThis.fetch = originalFetch;
 });

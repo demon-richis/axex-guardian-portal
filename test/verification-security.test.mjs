@@ -28,6 +28,7 @@ const migrationFiles = [
   "0006_shared_rate_limits_and_ip_cache.sql",
   "0007_lock_legacy_exhausted_verification_state.sql",
   "0008_bot_case_codes.sql",
+  "0009_verification_policy.sql",
 ];
 
 async function applyMigration(client, name) {
@@ -112,6 +113,7 @@ test("durable-state migration backfills only from each user's latest token", asy
     for (const migration of migrationFiles.slice(0, 4)) await applyMigration(client, migration);
     await applyMigration(client, "0005_turnstile_challenge_timing.sql");
     await applyMigration(client, "0008_bot_case_codes.sql");
+    await applyMigration(client, "0009_verification_policy.sql");
     const db = drizzle(client, { schema });
     const base = new Date(Date.now() - 2_000);
     const future = new Date(Date.now() + 86_400_000);
@@ -159,6 +161,7 @@ test("durable-state migration backfills only from each user's latest token", asy
       },
     ]);
     await applyMigration(client, "0004_durable_verification_state.sql");
+    await applyMigration(client, "0009_verification_policy.sql");
     const states = await db.select().from(schema.verificationState);
     const completedState = states.find((state) => state.userId === "backfill-completed-user");
     const pendingState = states.find((state) => state.userId === "backfill-pending-user");
@@ -178,6 +181,7 @@ test("migration hardens legacy rows with three attempts into durable locks", asy
   const { client, db } = await freshDb({ through: 7 });
   try {
     await applyMigration(client, "0008_bot_case_codes.sql");
+    await applyMigration(client, "0009_verification_policy.sql");
     const seed = await seedToken(db, {
       token: "legacy-three-failures",
     });

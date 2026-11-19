@@ -5,6 +5,10 @@ import { CASE_CODE_PATTERN, isCaseCodeCollision } from "../../lib/case-code.serv
 import { isReferenceIdCollision } from "../../lib/reference-id.server.ts";
 import type { auditLogs, verificationState, verifyTokens } from "../../lib/db/schema.ts";
 import type { getDb } from "../../lib/db/client.server.ts";
+import {
+  normalizeVerificationPolicy,
+  parseOptionalVerificationPolicy,
+} from "../../lib/verification-policy.server.ts";
 
 type BotTokenDependencies = {
   validateApiKey: (request: Request) => Response | null;
@@ -22,6 +26,7 @@ const Body = z.object({
   guildMemberCount: z.number().int().nonnegative().optional(),
   expiresAt: z.string().datetime({ offset: true }),
   caseCode: z.string().regex(CASE_CODE_PATTERN).optional(),
+  policy: z.record(z.unknown()).optional(),
 });
 
 function safeFailureDetails(stage: string, error: unknown) {
@@ -61,12 +66,18 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
       return Response.json({ error: "Missing or invalid required fields" }, { status: 400 });
     }
 
+    const { token, userId, guildId, guildName, guildMemberCount, expiresAt, caseCode } =
+      parsed.data;
+    let policy;
+    try {
+      policy = parseOptionalVerificationPolicy(parsed.data.policy);
+    } catch {
+      console.error("[bot/token] Invalid verification policy");
+      return Response.json({ error: "Invalid verification policy" }, { status: 400 });
+    }
     stage = "database_initialization";
     const db = dependencies.getDb();
     const now = new Date();
-
-    const { token, userId, guildId, guildName, guildMemberCount, expiresAt, caseCode } =
-      parsed.data;
     stage = "verification_state_lookup";
     const state = (
       await db
@@ -141,6 +152,7 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
             status: "pending",
             referenceId,
             caseCode: caseCode ?? null,
+            policy,
           })
           .onConflictDoNothing({ target: dependencies.verifyTokens.token })
           .returning({
@@ -151,13 +163,13 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
         if (inserted[0]) {
           await db
             .insert(dependencies.verificationState)
-            .values({ guildId, userId, lastReferenceId: inserted[0].referenceId, updatedAt: now })
+            .values({ guildId, userId, lastReferenceId: inserted[0].referenceId, policy, updatedAt: now })
             .onConflictDoUpdate({
               target: [
                 dependencies.verificationState.guildId,
                 dependencies.verificationState.userId,
               ],
-              set: { lastReferenceId: inserted[0].referenceId, updatedAt: now },
+              set: { lastReferenceId: inserted[0].referenceId, policy, updatedAt: now },
             });
           console.log("[bot/token] Saved successfully");
           return Response.json({

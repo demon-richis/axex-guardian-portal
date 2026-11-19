@@ -19,6 +19,7 @@ const migrationFiles = [
   "0006_shared_rate_limits_and_ip_cache.sql",
   "0007_lock_legacy_exhausted_verification_state.sql",
   "0008_bot_case_codes.sql",
+  "0009_verification_policy.sql",
 ];
 const TEST_API_KEY = "unit-test-api-key-only";
 
@@ -98,6 +99,55 @@ test("token creation succeeds against the current isolated schema", async () => 
   } finally {
     await client.close();
   }
+});
+
+test("token creation stores the validated policy on the token and verification state", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const policy = {
+      maxAttempts: 2,
+      cooldownsSeconds: [60, 3600],
+      vpnAction: "challenge",
+      honeypotAction: "ban",
+      newAccountDays: 14,
+      newAccountAction: "raise_level",
+      networkFailMode: "open_flag",
+      verifyTimeoutSeconds: 120,
+      reviewEnabled: true,
+      reviewTimeoutHours: 48,
+      raidAction: "stricter_attempts",
+      autoVerifyEnabled: false,
+    };
+    const response = await handleBotTokenRequest(validRequest({ policy }), dependencies(db));
+    assert.equal(response.status, 200);
+    const tokenRow = (await db.select().from(schema.verifyTokens))[0];
+    const stateRow = (await db.select().from(schema.verificationState))[0];
+    assert.deepEqual(tokenRow.policy, policy);
+    assert.deepEqual(stateRow.policy, policy);
+  } finally {
+    await client.close();
+  }
+});
+
+test("out-of-bounds policy values are rejected before database access", async () => {
+  const response = await handleBotTokenRequest(
+    validRequest({ policy: {
+      maxAttempts: 99,
+      cooldownsSeconds: [180, 10800],
+      vpnAction: "block",
+      honeypotAction: "quarantine",
+      newAccountDays: 7,
+      newAccountAction: "flag",
+      networkFailMode: "closed",
+      verifyTimeoutSeconds: 60,
+      reviewEnabled: false,
+      reviewTimeoutHours: 24,
+      raidAction: "flag",
+      autoVerifyEnabled: false,
+    } }),
+    dependencies(null, { getDb() { assert.fail("invalid policy must not touch the database"); } }),
+  );
+  assert.equal(response.status, 400);
 });
 
 test("omitting migration 0004 reproduces a durable-state schema mismatch", async () => {

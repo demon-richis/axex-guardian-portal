@@ -38,6 +38,7 @@ export const verifyTokens = pgTable(
     status: text("status").default("pending").notNull(),
     referenceId: text("reference_id"),
     caseCode: text("case_code"),
+    policy: jsonb("policy").$type<Record<string, unknown>>(),
     challengeId: text("challenge_id"),
     challengeAnswerHash: text("challenge_answer_hash"),
     challengePrompt: text("challenge_prompt"),
@@ -85,6 +86,7 @@ export const verificationState = pgTable(
     cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
     lockedAt: timestamp("locked_at", { withTimezone: true }),
     lastReferenceId: text("last_reference_id"),
+    policy: jsonb("policy").$type<Record<string, unknown>>(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
   },
   (table) => [

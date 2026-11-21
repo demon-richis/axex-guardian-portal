@@ -6,6 +6,12 @@ import { applySecurityHeaders, validateRuntimeEnvironment } from "./lib/security
 
 if (import.meta.env.SSR) {
   validateRuntimeEnvironment();
+  void Promise.all([
+    import("./lib/db/client.server"),
+    import("./lib/verification-policy-schema.server"),
+  ]).then(([{ getDb }, { warnIfVerificationPolicySchemaMissing }]) =>
+    warnIfVerificationPolicySchemaMissing(getDb),
+  );
 
   if (process.env["BOT_WEBHOOK_URL"]) {
     console.log("[portal] Bot verification callback configured");

@@ -9,6 +9,7 @@ import {
   normalizeVerificationPolicy,
   parseOptionalVerificationPolicy,
 } from "../../lib/verification-policy.server.ts";
+import { isVerificationPolicyEnabled } from "../../lib/verification-policy-schema.server.ts";
 
 type BotTokenDependencies = {
   validateApiKey: (request: Request) => Response | null;
@@ -16,6 +17,7 @@ type BotTokenDependencies = {
   auditLogs: typeof auditLogs;
   verifyTokens: typeof verifyTokens;
   verificationState: typeof verificationState;
+  policyPersistenceEnabled?: boolean;
 };
 
 const Body = z.object({
@@ -77,6 +79,8 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
     }
     stage = "database_initialization";
     const db = dependencies.getDb();
+    const persistPolicy = dependencies.policyPersistenceEnabled ?? isVerificationPolicyEnabled();
+    const storedPolicy = persistPolicy ? policy : undefined;
     const now = new Date();
     stage = "verification_state_lookup";
     const state = (
@@ -152,7 +156,7 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
             status: "pending",
             referenceId,
             caseCode: caseCode ?? null,
-            policy,
+            ...(storedPolicy === undefined ? {} : { policy: storedPolicy }),
           })
           .onConflictDoNothing({ target: dependencies.verifyTokens.token })
           .returning({
@@ -163,13 +167,23 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
         if (inserted[0]) {
           await db
             .insert(dependencies.verificationState)
-            .values({ guildId, userId, lastReferenceId: inserted[0].referenceId, policy, updatedAt: now })
+            .values({
+              guildId,
+              userId,
+              lastReferenceId: inserted[0].referenceId,
+              updatedAt: now,
+              ...(storedPolicy === undefined ? {} : { policy: storedPolicy }),
+            })
             .onConflictDoUpdate({
               target: [
                 dependencies.verificationState.guildId,
                 dependencies.verificationState.userId,
               ],
-              set: { lastReferenceId: inserted[0].referenceId, policy, updatedAt: now },
+              set: {
+                lastReferenceId: inserted[0].referenceId,
+                updatedAt: now,
+                ...(storedPolicy === undefined ? {} : { policy: storedPolicy }),
+              },
             });
           console.log("[bot/token] Saved successfully");
           return Response.json({

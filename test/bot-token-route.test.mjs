@@ -118,12 +118,32 @@ test("token creation stores the validated policy on the token and verification s
       raidAction: "stricter_attempts",
       autoVerifyEnabled: false,
     };
-    const response = await handleBotTokenRequest(validRequest({ policy }), dependencies(db));
+    const response = await handleBotTokenRequest(
+      validRequest({ policy }),
+      dependencies(db, { policyPersistenceEnabled: true }),
+    );
     assert.equal(response.status, 200);
     const tokenRow = (await db.select().from(schema.verifyTokens))[0];
     const stateRow = (await db.select().from(schema.verificationState))[0];
     assert.deepEqual(tokenRow.policy, policy);
     assert.deepEqual(stateRow.policy, policy);
+  } finally {
+    await client.close();
+  }
+});
+
+test("policy persistence is disabled when the deploy-safety gate is off", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const response = await handleBotTokenRequest(
+      validRequest({ policy: { maxAttempts: 2 } }),
+      dependencies(db, { policyPersistenceEnabled: false }),
+    );
+    assert.equal(response.status, 200);
+    const tokenRow = (await db.select().from(schema.verifyTokens))[0];
+    const stateRow = (await db.select().from(schema.verificationState))[0];
+    assert.equal(tokenRow.policy, null);
+    assert.equal(stateRow.policy, null);
   } finally {
     await client.close();
   }

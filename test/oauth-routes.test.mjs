@@ -62,7 +62,7 @@ test("OAuth callback GET clears state after a mocked Discord exchange failure", 
     assert.equal(response.status, 302);
     assert.equal(location.pathname, "/verify");
     assert.equal(location.searchParams.get("token"), "verification-token");
-    assert.equal(location.searchParams.get("error"), "auth");
+    assert.equal(location.searchParams.get("error"), "oauth_token_exchange_failed");
     assert.match(cookie, /Max-Age=0/i);
     assertSecureCookie(cookie);
   } finally {

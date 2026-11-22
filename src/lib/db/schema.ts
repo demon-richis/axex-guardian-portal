@@ -164,7 +164,10 @@ export const auditLogs = pgTable(
     metadata: jsonb("metadata").$type<Record<string, unknown> | null>(),
     createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
   },
-  (table) => [index("audit_logs_guild_created_idx").on(table.guildId, table.createdAt)],
+  (table) => [
+    index("audit_logs_guild_created_idx").on(table.guildId, table.createdAt),
+    index("audit_logs_guild_ip_created_idx").on(table.guildId, table.ipAddress, table.createdAt),
+  ],
 );
 
 export const suspiciousAttempts = pgTable(

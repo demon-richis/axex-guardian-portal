@@ -176,7 +176,7 @@ export async function submitVerificationChallenge(
     ? Number(
         (
           await db.execute(
-            sql`select count(distinct ${auditLogs.userId}) as count from ${auditLogs} where ${auditLogs.guildId} = ${row.guildId} and ${auditLogs.ipAddress} = ${input.observedIp}`,
+            sql`select count(distinct ${auditLogs.userId}) as count from ${auditLogs} where ${auditLogs.guildId} = ${row.guildId} and ${auditLogs.ipAddress} = ${input.observedIp} and ${auditLogs.createdAt} > ${new Date(now.getTime() - 72 * 60 * 60 * 1000)}`,
           )
         ).rows[0]?.["count"] ?? 0,
       )

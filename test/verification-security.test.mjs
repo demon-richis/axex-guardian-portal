@@ -554,6 +554,38 @@ test("stored policy controls max attempts and per-attempt cooldowns", async () =
   }
 });
 
+test("same-IP correlation ignores audit users older than 72 hours", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const now = new Date();
+    const seed = await seedToken(db, { now });
+    await db.insert(schema.auditLogs).values(
+      ["old-user-1", "old-user-2", "old-user-3"].map((userId) => ({
+        guildId: "test-guild",
+        userId,
+        eventType: "VERIFIED",
+        ipAddress: "198.51.100.14",
+        createdAt: new Date(now.getTime() - 73 * 60 * 60 * 1000),
+      })),
+    );
+    const { challenge, correctAnswer } = await challengeFor(db, seed.token, now);
+    const result = await submitVerificationChallenge(
+      db,
+      submitInput(seed, challenge, correctAnswer, {
+        now,
+      }),
+    );
+    assert.equal(result.success, true);
+    const audit = (
+      await db.select().from(schema.auditLogs).where(eq(schema.auditLogs.userId, seed.discordId))
+    ).at(-1);
+    assert.equal(audit?.flagged, false);
+    assert.equal(audit?.flagReason, null);
+  } finally {
+    await client.close();
+  }
+});
+
 test("accounts younger than seven days are flagged without failing or burning attempts", async () => {
   const { client, db } = await freshDb();
   try {

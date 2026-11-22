@@ -79,12 +79,19 @@ export const Route = createFileRoute("/api/callback")({
         }
 
         try {
-          const [{ verifyTokens }, { checkIpCached }, { submitVerificationChallenge }] =
-            await Promise.all([
-              import("@/lib/db/schema"),
-              import("@/lib/ip-check-cache.server"),
-              import("@/lib/verification-submit.server"),
-            ]);
+          const [
+            { verifyTokens },
+            { checkIpCached },
+            { checkIp },
+            { submitVerificationChallenge },
+            { policyForToken },
+          ] = await Promise.all([
+            import("@/lib/db/schema"),
+            import("@/lib/ip-check-cache.server"),
+            import("@/lib/db/client.server"),
+            import("@/lib/verification-submit.server"),
+            import("@/lib/verification-policy.server"),
+          ]);
           const { token, challengeId, turnstileToken } = parsed.data;
           const row = (
             await db.select().from(verifyTokens).where(eq(verifyTokens.token, token)).limit(1)
@@ -94,6 +101,8 @@ export const Route = createFileRoute("/api/callback")({
           const observedIp = serverIp;
           let isVpn = false;
           let vpnTypeDetected: string | null = null;
+          let networkFlagged = false;
+          let networkFlagReason: string | null = null;
 
           // An identical duplicate is safe to acknowledge without repeating the IP
           // provider call; the submit service still binds it to the stored proof hash.
@@ -103,7 +112,10 @@ export const Route = createFileRoute("/api/callback")({
             row.challengeSubmissionHash,
           );
           if (!duplicate && row && !row.used && row.expiresAt.getTime() > Date.now()) {
-            const ip = await checkIpCached(db, observedIp);
+            const policy = policyForToken(row.policy);
+            const ip = await checkIpCached(db, observedIp, (address) =>
+              checkIp(address, policy.networkFailMode),
+            );
             if (ip.status === "unavailable") {
               console.error("[callback] Network security check unavailable; refusing verification");
               return Response.json(
@@ -117,6 +129,8 @@ export const Route = createFileRoute("/api/callback")({
             }
             isVpn = ip.isVPN;
             vpnTypeDetected = ip.type;
+            networkFlagged = Boolean(ip.flagged);
+            networkFlagReason = ip.reason ?? null;
           }
 
           const result = await submitVerificationChallenge(db, {
@@ -137,6 +151,8 @@ export const Route = createFileRoute("/api/callback")({
             requestHostname: new URL(request.url).hostname,
             isVpn,
             vpnTypeDetected,
+            networkFlagged,
+            networkFlagReason,
           });
           if (result.success && result.status === "bot_update_pending") {
             try {

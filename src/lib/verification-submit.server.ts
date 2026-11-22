@@ -27,6 +27,8 @@ export type ChallengeSubmission = {
   requestHostname: string;
   isVpn: boolean;
   vpnTypeDetected: string | null;
+  networkFlagged?: boolean | undefined;
+  networkFlagReason?: string | null | undefined;
   turnstileFetch?: typeof fetch | undefined;
   turnstileEnvironment?: NodeJS.ProcessEnv | undefined;
   now?: Date | undefined;
@@ -180,17 +182,19 @@ export async function submitVerificationChallenge(
       )
     : 0;
   const newAccount = accountAgeDays < policy.newAccountDays;
-  const automaticReason = honeypotTriggered
-    ? "Hidden verification trap activated"
-    : vpnDetected
-      ? "VPN or proxy detected"
-      : newAccount
-        ? "New Discord account"
-        : attempts >= 2
-          ? "Repeated verification attempt"
-          : sameIpUsers >= 3
-            ? "Shared IP used by multiple users"
-            : null;
+  const automaticReason = input.networkFlagged
+    ? (input.networkFlagReason ?? "Network check unavailable")
+    : honeypotTriggered
+      ? "Hidden verification trap activated"
+      : vpnDetected
+        ? "VPN or proxy detected"
+        : newAccount
+          ? "New Discord account"
+          : attempts >= 2
+            ? "Repeated verification attempt"
+            : sameIpUsers >= 3
+              ? "Shared IP used by multiple users"
+              : null;
   const flagged = Boolean(automaticReason);
   const vpnTerminal = vpnDetected && policy.vpnAction === "block";
   const honeypotTerminal = honeypotTriggered && policy.honeypotAction !== "flag";

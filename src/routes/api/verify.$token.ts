@@ -18,6 +18,7 @@ export const Route = createFileRoute("/api/verify/$token")({
             import("@/lib/session.server"),
           ]);
           const { publicVerificationSummary } = await import("@/lib/verification-response.server");
+          const { policyForToken } = await import("@/lib/verification-policy.server");
           const db = getDb();
           const ip = clientIp(request) || "unknown";
           const ipLimit = await consumeConfiguredRateLimit(
@@ -63,24 +64,32 @@ export const Route = createFileRoute("/api/verify/$token")({
               .limit(1)
           )[0];
           const attempts = state?.attempts ?? row.attempts;
+          const policy = policyForToken(row.policy ?? state?.policy);
           const sessionMatches = Boolean(
             row.discordId && verifySession(request, token, row.discordId),
           );
           const common = publicVerificationSummary(row, attempts, sessionMatches, snowflakeToDate);
           if (row.status === "completed")
-            return Response.json({ valid: true, completed: true, ...common });
+            return Response.json({
+              valid: true,
+              completed: true,
+              maxAttempts: policy.maxAttempts,
+              ...common,
+            });
           if (row.status === "bot_update_pending") {
             return Response.json({
               valid: true,
               pendingPassed: Boolean(row.completedAt),
+              maxAttempts: policy.maxAttempts,
               ...common,
             });
           }
-          if (row.status === "locked" || state?.lockedAt || attempts >= 3) {
+          if (row.status === "locked" || state?.lockedAt || attempts >= policy.maxAttempts) {
             return Response.json({
               valid: false,
               reason: "lockout",
               attempts,
+              maxAttempts: policy.maxAttempts,
               failureReason: row.failureReason,
               referenceId: state?.lastReferenceId ?? row.referenceId,
               caseCode: row.caseCode,
@@ -92,6 +101,7 @@ export const Route = createFileRoute("/api/verify/$token")({
               valid: false,
               reason: "cooldown",
               attempts,
+              maxAttempts: policy.maxAttempts,
               cooldownUntil: state.cooldownUntil.toISOString(),
               failureReason: row.failureReason,
               referenceId: state.lastReferenceId ?? row.referenceId,
@@ -104,6 +114,7 @@ export const Route = createFileRoute("/api/verify/$token")({
             return Response.json({ valid: false, reason: "expired" });
           return Response.json({
             valid: true,
+            maxAttempts: policy.maxAttempts,
             ...common,
             cooldownUntil: state?.cooldownUntil?.toISOString() ?? null,
           });

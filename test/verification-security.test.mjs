@@ -55,6 +55,7 @@ async function seedToken(
     now = new Date(),
     expiresInMs = 60 * 60 * 1000,
     discordId = snowflakeFrom(new Date(now.getTime() - 30 * 86_400_000)),
+    policy,
   } = {},
 ) {
   const targetUserId = userId ?? discordId;
@@ -70,6 +71,7 @@ async function seedToken(
     discordId,
     discordUsername: "staging-user",
     attempts: 0,
+    ...(policy ? { policy } : {}),
   });
   return { token, referenceId, discordId, userId: targetUserId };
 }
@@ -496,6 +498,57 @@ test("invalid Turnstile attempts escalate across challenges and the third locks 
       }),
     );
     assert.equal(duplicate.locked, true);
+  } finally {
+    await client.close();
+  }
+});
+
+test("stored policy controls max attempts and per-attempt cooldowns", async () => {
+  const { client, db } = await freshDb();
+  try {
+    let now = new Date();
+    const seed = await seedToken(db, {
+      now,
+      policy: {
+        maxAttempts: 2,
+        cooldownsSeconds: [7, 11],
+        vpnAction: "block",
+        honeypotAction: "quarantine",
+        newAccountDays: 7,
+        newAccountAction: "flag",
+        networkFailMode: "closed",
+        verifyTimeoutSeconds: 60,
+        reviewEnabled: false,
+        reviewTimeoutHours: 24,
+        raidAction: "flag",
+        autoVerifyEnabled: false,
+      },
+    });
+    let challenge = await challengeFor(db, seed.token, now);
+    const first = await submitVerificationChallenge(
+      db,
+      submitInput(seed, challenge.challenge, "unused", {
+        now,
+        turnstileEnvironment: { NODE_ENV: "production", TURNSTILE_SECRET_KEY: "test-secret" },
+        turnstileFetch: async () => Response.json({ success: false }),
+      }),
+    );
+    assert.equal(first.attempts, 1);
+    assert.ok(first.cooldownUntil);
+    assert.ok(new Date(first.cooldownUntil).getTime() - now.getTime() >= 7_000);
+    now = new Date(new Date(first.cooldownUntil).getTime() + 1_000);
+    challenge = await challengeFor(db, seed.token, now);
+    const second = await submitVerificationChallenge(
+      db,
+      submitInput(seed, challenge.challenge, "unused", {
+        now,
+        turnstileEnvironment: { NODE_ENV: "production", TURNSTILE_SECRET_KEY: "test-secret" },
+        turnstileFetch: async () => Response.json({ success: false }),
+      }),
+    );
+    assert.equal(second.attempts, 2);
+    assert.equal(second.locked, true);
+    assert.equal(second.cooldownUntil, null);
   } finally {
     await client.close();
   }

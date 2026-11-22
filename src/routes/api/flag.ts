@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 const Body = z.object({
@@ -27,8 +27,10 @@ export const Route = createFileRoute("/api/flag")({
         }
         console.log("[flag] Recording suspicious attempt");
         try {
-          const { auditLogs, suspiciousAttempts } = await import("@/lib/db/schema");
+          const { auditLogs, suspiciousAttempts, verificationState } =
+            await import("@/lib/db/schema");
           const db = (await import("@/lib/db/client.server")).getDb();
+          const { policyForToken } = await import("@/lib/verification-policy.server");
           const value = parsed.data;
           const attempt = (
             await db
@@ -52,7 +54,20 @@ export const Route = createFileRoute("/api/flag")({
               })
               .returning({ attemptCount: suspiciousAttempts.attemptCount })
           )[0];
-          const reviewRequired = (attempt?.attemptCount ?? 1) >= 3;
+          const state = (
+            await db
+              .select({ policy: verificationState.policy })
+              .from(verificationState)
+              .where(
+                and(
+                  eq(verificationState.guildId, value.guildId),
+                  eq(verificationState.userId, value.userId),
+                ),
+              )
+              .limit(1)
+          )[0];
+          const reviewRequired =
+            (attempt?.attemptCount ?? 1) >= policyForToken(state?.policy).maxAttempts;
           console.log(
             "[flag] Attempt count:",
             attempt?.attemptCount ?? 1,

@@ -4,6 +4,7 @@ import type { getDb } from "./db/client.server";
 import { verifyTokens } from "./db/schema.ts";
 import { ensureVerificationState } from "./verification-state.server.ts";
 import { turnstileContext } from "./turnstile.server.ts";
+import { policyForToken } from "./verification-policy.server.ts";
 
 type PortalDb = ReturnType<typeof getDb>;
 
@@ -51,9 +52,10 @@ export async function issueVerificationChallenge(
   if (!row) return { success: false, error: "invalid_token" };
   const state = await ensureVerificationState(db, row.guildId, row.userId, now);
   if (!state) return { success: false, error: "invalid_token" };
+  const policy = policyForToken(row.policy ?? state.policy);
   if (row.used) return { success: false, error: "used" };
   if (row.expiresAt.getTime() <= now.getTime()) return { success: false, error: "expired" };
-  if (row.status === "locked" || state.lockedAt || state.attempts >= 3) {
+  if (row.status === "locked" || state.lockedAt || state.attempts >= policy.maxAttempts) {
     return { success: false, error: "locked", attempts: state.attempts };
   }
   if (state.cooldownUntil && state.cooldownUntil.getTime() > now.getTime()) {

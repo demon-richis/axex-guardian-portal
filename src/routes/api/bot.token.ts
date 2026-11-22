@@ -8,6 +8,7 @@ import type { getDb } from "../../lib/db/client.server.ts";
 import {
   normalizeVerificationPolicy,
   parseOptionalVerificationPolicy,
+  policyForToken,
 } from "../../lib/verification-policy.server.ts";
 import { isVerificationPolicyEnabled } from "../../lib/verification-policy-schema.server.ts";
 
@@ -95,7 +96,8 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
         )
         .limit(1)
     )[0];
-    if (state?.lockedAt || (state?.attempts ?? 0) >= 3) {
+    const effectivePolicy = policyForToken(policy ?? state?.policy);
+    if (state?.lockedAt || (state?.attempts ?? 0) >= effectivePolicy.maxAttempts) {
       return Response.json(
         { error: "Verification is locked", locked: true, attempts: state?.attempts ?? 0 },
         { status: 423 },

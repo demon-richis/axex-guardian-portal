@@ -59,6 +59,7 @@ type TokenInfo = {
   referenceId?: string | null;
   caseCode?: string | null;
   attempts?: number;
+  maxAttempts?: number;
   cooldownUntil?: string | null;
   failureReason?: string | null;
   botAcknowledged?: boolean;
@@ -104,29 +105,95 @@ const ERRORS: Record<ErrorKind, [string, string]> = {
     "Discord update is taking longer than usual",
     "Your verification was accepted, but Discord has not confirmed the role update yet. Contact a moderator with your reference code if the role does not appear shortly.",
   ],
-  generic: ["Unexpected verification error", "Axex could not identify the exact cause. Try again, or contact server staff with your Case ID."],
+  generic: [
+    "Unexpected verification error",
+    "Axex could not identify the exact cause. Try again, or contact server staff with your Case ID.",
+  ],
   turnstileRetry: ["Check again", "Please complete the security check again."],
-  authCancelled: ["Discord authorization cancelled", "Discord reported that authorization was denied. No verification result was submitted. You can try authorizing again."],
-  authStateInvalid: ["Sign-in session expired", "Axex could not validate the sign-in session. Restart Discord authorization from your original verification link."],
-  authCodeMissing: ["Discord sign-in response incomplete", "Discord did not return the temporary authorization code. Start authorization again."],
-  authProviderRejected: ["Discord authorization failed", "Discord could not complete this authorization request. Try again later."],
-  authTokenExchangeFailed: ["Discord sign-in could not be completed", "Discord rejected the temporary sign-in response. Restart authorization. If this continues, contact server staff."],
-  authProfileLookupFailed: ["Could not load Discord account", "Discord authorization completed, but Axex could not retrieve your Discord profile. Try again."],
-  authIdentityMismatch: ["Wrong Discord account", "This verification link was created for a different Discord account. Switch to the intended Discord account in your browser, then authorize again."],
-  authTokenExpired: ["Verification link expired", "This verification link has expired. Ask a server administrator to issue a new verification link."],
-  authTokenUsed: ["Verification link already used", "This verification link has already been completed or consumed. Ask server staff for a new link if you still need access."],
-  authTokenInvalid: ["Invalid verification link", "This link does not match an active verification request. Use the latest link sent by your Discord server."],
-  authConfiguration: ["Axex sign-in is misconfigured", "The portal could not start Discord authorization because its configuration is incomplete. Contact server staff."],
-  authRateLimited: ["Too many sign-in attempts", "Please wait a moment before starting Discord authorization again."],
-  authServiceUnavailable: ["Axex verification temporarily unavailable", "A required service did not respond. No verification result was submitted. Try again shortly."],
-  authSessionMismatch: ["Verification session mismatch", "The browser session could not be matched to this verification request. Reopen the original verification link and authorize the intended Discord account."],
-  authUnknown: ["Discord authorization could not be completed", "Axex could not determine the exact reason. Try authorizing again; if it happens again, share your Case ID with server staff."],
-  rateLimited: ["Too many requests", "Please wait a moment before retrying this verification step."],
-  serviceUnavailable: ["Verification service unavailable", "A required verification service is temporarily unavailable. Your verification could not continue. Try again shortly."],
-  sessionMismatch: ["Verification session mismatch", "The Discord account or browser session no longer matches this verification request. Restart Discord authorization from the original link."],
-  invalidRequest: ["Security request was rejected", "The verification request was incomplete or invalid. Refresh the original verification page and try again."],
-  tokenExpired: ["Verification link expired", "This verification link has expired. Ask server staff to send you a new link."],
-  tokenUsed: ["Verification link already used", "This verification link has already been used. Ask server staff for a new link if you still need access."],
+  authCancelled: [
+    "Discord authorization cancelled",
+    "Discord reported that authorization was denied. No verification result was submitted. You can try authorizing again.",
+  ],
+  authStateInvalid: [
+    "Sign-in session expired",
+    "Axex could not validate the sign-in session. Restart Discord authorization from your original verification link.",
+  ],
+  authCodeMissing: [
+    "Discord sign-in response incomplete",
+    "Discord did not return the temporary authorization code. Start authorization again.",
+  ],
+  authProviderRejected: [
+    "Discord authorization failed",
+    "Discord could not complete this authorization request. Try again later.",
+  ],
+  authTokenExchangeFailed: [
+    "Discord sign-in could not be completed",
+    "Discord rejected the temporary sign-in response. Restart authorization. If this continues, contact server staff.",
+  ],
+  authProfileLookupFailed: [
+    "Could not load Discord account",
+    "Discord authorization completed, but Axex could not retrieve your Discord profile. Try again.",
+  ],
+  authIdentityMismatch: [
+    "Wrong Discord account",
+    "This verification link was created for a different Discord account. Switch to the intended Discord account in your browser, then authorize again.",
+  ],
+  authTokenExpired: [
+    "Verification link expired",
+    "This verification link has expired. Ask a server administrator to issue a new verification link.",
+  ],
+  authTokenUsed: [
+    "Verification link already used",
+    "This verification link has already been completed or consumed. Ask server staff for a new link if you still need access.",
+  ],
+  authTokenInvalid: [
+    "Invalid verification link",
+    "This link does not match an active verification request. Use the latest link sent by your Discord server.",
+  ],
+  authConfiguration: [
+    "Axex sign-in is misconfigured",
+    "The portal could not start Discord authorization because its configuration is incomplete. Contact server staff.",
+  ],
+  authRateLimited: [
+    "Too many sign-in attempts",
+    "Please wait a moment before starting Discord authorization again.",
+  ],
+  authServiceUnavailable: [
+    "Axex verification temporarily unavailable",
+    "A required service did not respond. No verification result was submitted. Try again shortly.",
+  ],
+  authSessionMismatch: [
+    "Verification session mismatch",
+    "The browser session could not be matched to this verification request. Reopen the original verification link and authorize the intended Discord account.",
+  ],
+  authUnknown: [
+    "Discord authorization could not be completed",
+    "Axex could not determine the exact reason. Try authorizing again; if it happens again, share your Case ID with server staff.",
+  ],
+  rateLimited: [
+    "Too many requests",
+    "Please wait a moment before retrying this verification step.",
+  ],
+  serviceUnavailable: [
+    "Verification service unavailable",
+    "A required verification service is temporarily unavailable. Your verification could not continue. Try again shortly.",
+  ],
+  sessionMismatch: [
+    "Verification session mismatch",
+    "The Discord account or browser session no longer matches this verification request. Restart Discord authorization from the original link.",
+  ],
+  invalidRequest: [
+    "Security request was rejected",
+    "The verification request was incomplete or invalid. Refresh the original verification page and try again.",
+  ],
+  tokenExpired: [
+    "Verification link expired",
+    "This verification link has expired. Ask server staff to send you a new link.",
+  ],
+  tokenUsed: [
+    "Verification link already used",
+    "This verification link has already been used. Ask server staff for a new link if you still need access.",
+  ],
 };
 
 function track(token: string, event: Parameters<typeof telemetryEvent>[1], detail?: string): void {
@@ -342,7 +409,12 @@ function VerifyPage() {
           error?: string;
         } | null;
         if (!response.ok) {
-          fail(mapVerificationErrorCode(result?.error ?? (response.status >= 500 ? "service_unavailable" : "network_check_unavailable")));
+          fail(
+            mapVerificationErrorCode(
+              result?.error ??
+                (response.status >= 500 ? "service_unavailable" : "network_check_unavailable"),
+            ),
+          );
           return;
         }
         if (!result) {
@@ -373,7 +445,12 @@ function VerifyPage() {
             error?: string;
           } | null;
           if (!challengeResponse.ok || !challengeResult?.success || !challengeResult.challenge) {
-            fail(mapVerificationErrorCode(challengeResult?.error ?? (challengeResponse.status >= 500 ? "challenge_unavailable" : "invalid_request")));
+            fail(
+              mapVerificationErrorCode(
+                challengeResult?.error ??
+                  (challengeResponse.status >= 500 ? "challenge_unavailable" : "invalid_request"),
+              ),
+            );
             return;
           }
           setChallenge(challengeResult.challenge);
@@ -437,7 +514,13 @@ function VerifyPage() {
         const res = await fetch(`/api/verify/${encodeURIComponent(token)}`);
         console.log("[verify] Token validation response:", res.status);
         if (!res.ok) {
-          return fail(res.status === 429 ? "rateLimited" : res.status >= 500 ? "serviceUnavailable" : "invalid");
+          return fail(
+            res.status === 429
+              ? "rateLimited"
+              : res.status >= 500
+                ? "serviceUnavailable"
+                : "invalid",
+          );
         }
         const data = (await res.json()) as TokenInfo & { valid: boolean; reason?: string };
         console.log("[verify] Token validation result:", {
@@ -566,6 +649,7 @@ function VerifyPage() {
         success?: boolean;
         passed?: boolean;
         attempts?: number;
+        maxAttempts?: number;
         status?: string;
         referenceId?: string | null;
         caseCode?: string | null;
@@ -606,19 +690,21 @@ function VerifyPage() {
 
       const mappedError = mapTurnstileError(result?.error, result?.retryAfterSeconds);
       const publicErrorKind = mapVerificationErrorCode(result?.error);
-      if (publicErrorKind === "turnstileRetry" || mappedError.kind === "turnstileRetry") return "retry";
+      if (publicErrorKind === "turnstileRetry" || mappedError.kind === "turnstileRetry")
+        return "retry";
       const serverAttempts = result?.attempts ?? attempts;
       if (result?.success && serverAttempts > 0) {
         setAttempts(serverAttempts);
         writeAttemptCount(attemptKey, serverAttempts);
       }
-      if (result?.cooldownUntil && (result.attempts ?? 0) < 3) {
+      const maxAttempts = result?.maxAttempts ?? info?.maxAttempts ?? 3;
+      if (result?.cooldownUntil && (result.attempts ?? 0) < maxAttempts) {
         setCooldownUntil(result.cooldownUntil);
         setFailureReason(result.failureReason ?? "Verification failed");
         setPhase("cooldown");
         return;
       }
-      if (result?.locked || serverAttempts >= 3) {
+      if (result?.locked || serverAttempts >= maxAttempts) {
         fail("lockout");
         return;
       }
@@ -653,7 +739,7 @@ function VerifyPage() {
       }
       fail("generic");
     },
-    [attemptKey, attempts, fail, runIpCheck, submitAttempt, token],
+    [attemptKey, attempts, fail, info?.maxAttempts, runIpCheck, submitAttempt, token],
   );
 
   const handleTurnstileError = useCallback(
@@ -712,7 +798,10 @@ function VerifyPage() {
                 retryLabel={isRetryableOAuthError(errorKind) ? "Try Discord again" : "Check again"}
                 onRetry={
                   isRetryableOAuthError(errorKind) && token
-                    ? () => window.location.assign(`/api/auth/discord?token=${encodeURIComponent(token)}`)
+                    ? () =>
+                        window.location.assign(
+                          `/api/auth/discord?token=${encodeURIComponent(token)}`,
+                        )
                     : errorKind === "network" ||
                         errorKind === "captchaUnavailable" ||
                         errorKind === "serviceUnavailable" ||

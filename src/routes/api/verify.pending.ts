@@ -23,6 +23,7 @@ export const Route = createFileRoute("/api/verify/pending")({
         try {
           const { verificationState, verifyTokens } = await import("@/lib/db/schema");
           const { getDb } = await import("@/lib/db/client.server");
+          const { policyForToken } = await import("@/lib/verification-policy.server");
           const db = getDb();
           const state = (
             await db
@@ -44,6 +45,7 @@ export const Route = createFileRoute("/api/verify/pending")({
               expiresAt: verifyTokens.expiresAt,
               referenceId: verifyTokens.referenceId,
               caseCode: verifyTokens.caseCode,
+              policy: verifyTokens.policy,
             })
             .from(verifyTokens)
             .where(
@@ -58,7 +60,8 @@ export const Route = createFileRoute("/api/verify/pending")({
 
           const row = existing[0];
           const attempts = state?.attempts ?? 0;
-          const locked = Boolean(state?.lockedAt) || attempts >= 3;
+          const policy = policyForToken(row?.policy ?? state?.policy);
+          const locked = Boolean(state?.lockedAt) || attempts >= policy.maxAttempts;
           const coolingDown = Boolean(
             state?.cooldownUntil && state.cooldownUntil.getTime() > Date.now(),
           );
@@ -74,6 +77,7 @@ export const Route = createFileRoute("/api/verify/pending")({
             token,
             status: row?.status ?? null,
             attempts,
+            maxAttempts: policy.maxAttempts,
             locked,
             cooldownUntil: state?.cooldownUntil?.toISOString() ?? null,
             failureReason: row?.failureReason ?? null,

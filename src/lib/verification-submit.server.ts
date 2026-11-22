@@ -4,6 +4,7 @@ import type { getDb } from "./db/client.server";
 import { auditLogs, suspiciousAttempts, verifyTokens } from "./db/schema.ts";
 import { ensureVerificationState } from "./verification-state.server.ts";
 import { verifyTurnstile } from "./turnstile.server.ts";
+import { cooldownSecondsForAttempt, policyForToken } from "./verification-policy.server.ts";
 
 type PortalDb = ReturnType<typeof getDb>;
 
@@ -62,6 +63,7 @@ export async function submitVerificationChallenge(
   if (!row) return { success: false, error: "invalid_token", httpStatus: 400 };
   const state = await ensureVerificationState(db, row.guildId, row.userId, now);
   if (!state) return { success: false, error: "invalid_token", httpStatus: 400 };
+  const policy = policyForToken(row.policy ?? state.policy);
 
   const submittedDigest = createHash("sha256")
     .update(
@@ -83,7 +85,7 @@ export async function submitVerificationChallenge(
       attempts: state.attempts,
       cooldownUntil: state.cooldownUntil?.toISOString() ?? null,
       failureReason: row.failureReason,
-      locked: Boolean(state.lockedAt) || state.attempts >= 3,
+      locked: Boolean(state.lockedAt) || state.attempts >= policy.maxAttempts,
       idempotent: true,
       ...(terminal && row.status === "bot_update_pending" ? { error: "bot_update_pending" } : {}),
     };
@@ -105,7 +107,7 @@ export async function submitVerificationChallenge(
   if (row.challengeId === input.challengeId && row.challengeConsumedAt) {
     return { success: false, error: "challenge_already_consumed", httpStatus: 409 };
   }
-  if (row.status === "locked" || state.lockedAt || state.attempts >= 3) {
+  if (row.status === "locked" || state.lockedAt || state.attempts >= policy.maxAttempts) {
     return {
       success: false,
       error: "attempts_exhausted",
@@ -177,11 +179,12 @@ export async function submitVerificationChallenge(
         ).rows[0]?.["count"] ?? 0,
       )
     : 0;
+  const newAccount = accountAgeDays < policy.newAccountDays;
   const automaticReason = honeypotTriggered
     ? "Hidden verification trap activated"
     : vpnDetected
       ? "VPN or proxy detected"
-      : accountAgeDays < 7
+      : newAccount
         ? "New Discord account"
         : attempts >= 2
           ? "Repeated verification attempt"
@@ -189,16 +192,17 @@ export async function submitVerificationChallenge(
             ? "Shared IP used by multiple users"
             : null;
   const flagged = Boolean(automaticReason);
-  const finalPassed = proofCorrect && !vpnDetected && !honeypotTriggered;
-  const locked = !finalPassed && (attempts >= 3 || vpnDetected || honeypotTriggered);
-  const terminal = finalPassed || locked || vpnDetected;
+  const vpnTerminal = vpnDetected && policy.vpnAction === "block";
+  const honeypotTerminal = honeypotTriggered && policy.honeypotAction !== "flag";
+  const newAccountTerminal = newAccount && policy.newAccountAction === "block";
+  const finalPassed = proofCorrect && !vpnTerminal && !honeypotTerminal && !newAccountTerminal;
+  const locked =
+    !finalPassed &&
+    (attempts >= policy.maxAttempts || vpnTerminal || honeypotTerminal || newAccountTerminal);
+  const terminal = finalPassed || locked || vpnTerminal || honeypotTerminal || newAccountTerminal;
   const cooldownUntil = terminal
     ? null
-    : attempts === 1
-      ? new Date(now.getTime() + 3 * 60 * 1000)
-      : attempts === 2
-        ? new Date(now.getTime() + 3 * 60 * 60 * 1000)
-        : null;
+    : new Date(now.getTime() + cooldownSecondsForAttempt(policy, attempts) * 1000);
   const committedAttempts = finalPassed ? 0 : attempts;
   const committedCooldownUntil = finalPassed ? null : cooldownUntil;
   const committedLocked = finalPassed ? false : locked;
@@ -227,6 +231,7 @@ export async function submitVerificationChallenge(
     vpnType,
     botDetected,
     honeypotTriggered,
+    honeypotAction: policy.honeypotAction,
     accountAgeDays,
     clickMs,
     responseTimeMs,
@@ -326,7 +331,8 @@ export async function submitVerificationChallenge(
         attempts: currentState?.attempts ?? current.attempts,
         cooldownUntil: currentState?.cooldownUntil?.toISOString() ?? null,
         failureReason: current.failureReason,
-        locked: Boolean(currentState?.lockedAt) || (currentState?.attempts ?? 0) >= 3,
+        locked:
+          Boolean(currentState?.lockedAt) || (currentState?.attempts ?? 0) >= policy.maxAttempts,
         idempotent: true,
       };
     }

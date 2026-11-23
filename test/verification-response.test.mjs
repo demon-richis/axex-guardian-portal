@@ -8,6 +8,7 @@ const row = {
   guildMemberCount: 42,
   expiresAt: new Date("2026-10-20T00:00:00.000Z"),
   status: "pending",
+  level: "medium",
   referenceId: "AX-12345678",
   failureReason: null,
   botAcknowledgedAt: null,
@@ -19,6 +20,7 @@ const row = {
 
 test("public token status omits identity unless the signed OAuth session matches", () => {
   const publicResult = publicVerificationSummary(row, 1, false, () => new Date());
+  assert.equal(publicResult.level, "medium");
   assert.equal("userId" in publicResult, false);
   assert.equal(publicResult.discordUser, null);
   assert.equal(JSON.stringify(publicResult).includes(row.discordId), false);

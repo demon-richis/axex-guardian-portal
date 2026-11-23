@@ -20,6 +20,8 @@ const migrationFiles = [
   "0007_lock_legacy_exhausted_verification_state.sql",
   "0008_bot_case_codes.sql",
   "0009_verification_policy.sql",
+  "0010_audit_logs_ip_window.sql",
+  "0011_verification_levels.sql",
 ];
 const TEST_API_KEY = "unit-test-api-key-only";
 
@@ -130,6 +132,51 @@ test("token creation stores the validated policy on the token and verification s
   } finally {
     await client.close();
   }
+});
+
+test("token creation stores the bot's initial level and trusted signals", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const response = await handleBotTokenRequest(
+      validRequest({
+        level: "medium",
+        autoCandidate: true,
+        profileSignals: { avatarDecoration: true },
+        riskSignals: { defaultAvatar: false, raidBurst: false },
+      }),
+      dependencies(db),
+    );
+    assert.equal(response.status, 200);
+    const [row] = await db.select().from(schema.verifyTokens);
+    assert.equal(row.initialLevel, "medium");
+    assert.equal(row.level, "medium");
+    assert.equal(row.autoCandidate, true);
+    assert.deepEqual(row.profileSignals, { avatarDecoration: true });
+    assert.deepEqual(row.riskSignals, { defaultAvatar: false, raidBurst: false });
+  } finally {
+    await client.close();
+  }
+});
+
+test("token creation rejects unknown levels and profile signal keys", async () => {
+  const noDatabase = dependencies(null, {
+    getDb() {
+      assert.fail("invalid levels must not touch the database");
+    },
+  });
+  assert.equal(
+    (await handleBotTokenRequest(validRequest({ level: "trusted" }), noDatabase)).status,
+    400,
+  );
+  assert.equal(
+    (
+      await handleBotTokenRequest(
+        validRequest({ profileSignals: { avatarDecoration: true, arbitrary: true } }),
+        noDatabase,
+      )
+    ).status,
+    400,
+  );
 });
 
 test("policy persistence is disabled when the deploy-safety gate is off", async () => {

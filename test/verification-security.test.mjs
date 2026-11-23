@@ -29,6 +29,8 @@ const migrationFiles = [
   "0007_lock_legacy_exhausted_verification_state.sql",
   "0008_bot_case_codes.sql",
   "0009_verification_policy.sql",
+  "0010_audit_logs_ip_window.sql",
+  "0011_verification_levels.sql",
 ];
 
 async function applyMigration(client, name) {
@@ -116,6 +118,8 @@ test("durable-state migration backfills only from each user's latest token", asy
     await applyMigration(client, "0005_turnstile_challenge_timing.sql");
     await applyMigration(client, "0008_bot_case_codes.sql");
     await applyMigration(client, "0009_verification_policy.sql");
+    await applyMigration(client, "0010_audit_logs_ip_window.sql");
+    await applyMigration(client, "0011_verification_levels.sql");
     const db = drizzle(client, { schema });
     const base = new Date(Date.now() - 2_000);
     const future = new Date(Date.now() + 86_400_000);
@@ -184,6 +188,8 @@ test("migration hardens legacy rows with three attempts into durable locks", asy
   try {
     await applyMigration(client, "0008_bot_case_codes.sql");
     await applyMigration(client, "0009_verification_policy.sql");
+    await applyMigration(client, "0010_audit_logs_ip_window.sql");
+    await applyMigration(client, "0011_verification_levels.sql");
     const seed = await seedToken(db, {
       token: "legacy-three-failures",
     });
@@ -652,6 +658,60 @@ test("a triggered honeypot cannot pass and produces a locked bot callback", asyn
     assert.equal(outbox.payload.botDetected, true);
     assert.equal(outbox.payload.honeypotTriggered, true);
     assert.equal(outbox.payload.locked, true);
+  } finally {
+    await client.close();
+  }
+});
+
+test("portal escalates a blocklist hit to a terminal critical callback", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const seed = await seedToken(db);
+    await db
+      .update(schema.verifyTokens)
+      .set({ riskSignals: { blocklistHit: true } })
+      .where(eq(schema.verifyTokens.token, seed.token));
+    const { challenge, correctAnswer } = await challengeFor(db, seed.token);
+    const result = await submitVerificationChallenge(
+      db,
+      submitInput(seed, challenge, correctAnswer),
+    );
+    const [row] = await db
+      .select()
+      .from(schema.verifyTokens)
+      .where(eq(schema.verifyTokens.token, seed.token));
+    const [outbox] = await db.select().from(schema.botCallbackOutbox);
+
+    assert.equal(result.passed, false);
+    assert.equal(result.level, "critical");
+    assert.equal(row.status, "bot_update_pending");
+    assert.equal(outbox.payload.level, "critical");
+    assert.equal(outbox.payload.passed, false);
+    assert.equal(outbox.payload.flagReason, "Blocklist hit");
+  } finally {
+    await client.close();
+  }
+});
+
+test("high-risk users are not marked verified by the lower-assurance Turnstile flow", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const seed = await seedToken(db);
+    await db
+      .update(schema.verifyTokens)
+      .set({ riskSignals: { raidBurst: true } })
+      .where(eq(schema.verifyTokens.token, seed.token));
+    const { challenge, correctAnswer } = await challengeFor(db, seed.token);
+    const result = await submitVerificationChallenge(
+      db,
+      submitInput(seed, challenge, correctAnswer),
+    );
+    const [outbox] = await db.select().from(schema.botCallbackOutbox);
+    assert.equal(result.passed, false);
+    assert.equal(result.level, "high");
+    assert.equal(outbox.payload.passed, false);
+    assert.equal(outbox.payload.level, "high");
+    assert.equal(outbox.payload.flagReason, "Raid burst active");
   } finally {
     await client.close();
   }

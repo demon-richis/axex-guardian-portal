@@ -82,13 +82,15 @@ export const Route = createFileRoute("/api/callback")({
           const [
             { verifyTokens },
             { checkIpCached },
-            { checkIp },
+            { checkIp, snowflakeToDate },
+            { analyzePortalUser },
             { submitVerificationChallenge },
             { policyForToken },
           ] = await Promise.all([
             import("@/lib/db/schema"),
             import("@/lib/ip-check-cache.server"),
             import("@/lib/db/client.server"),
+            import("@/lib/intelligence.server"),
             import("@/lib/verification-submit.server"),
             import("@/lib/verification-policy.server"),
           ]);
@@ -133,6 +135,15 @@ export const Route = createFileRoute("/api/callback")({
             networkFlagReason = ip.reason ?? null;
           }
 
+          const intelligence =
+            !duplicate && row?.discordId
+              ? await analyzePortalUser(row.discordId, row.guildId, {
+                  username: row.discordUsername,
+                  avatar: row.discordAvatar,
+                  createdTimestamp: snowflakeToDate(row.discordId).getTime(),
+                  ip: observedIp,
+                })
+              : null;
           const result = await submitVerificationChallenge(db, {
             token,
             challengeId,
@@ -153,6 +164,7 @@ export const Route = createFileRoute("/api/callback")({
             vpnTypeDetected,
             networkFlagged,
             networkFlagReason,
+            intelligenceRecommendation: intelligence?.recommendation,
           });
           if (result.success && result.status === "bot_update_pending") {
             try {

@@ -23,6 +23,8 @@ const migrationFiles = [
   "0007_lock_legacy_exhausted_verification_state.sql",
   "0008_bot_case_codes.sql",
   "0009_verification_policy.sql",
+  "0010_audit_logs_ip_window.sql",
+  "0011_verification_levels.sql",
 ];
 const KEY = "unit-test-api-key-only";
 

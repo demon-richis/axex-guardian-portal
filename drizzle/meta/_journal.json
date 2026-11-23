@@ -64,6 +64,27 @@
       "when": 1792520000000,
       "tag": "0008_bot_case_codes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1795362200000,
+      "tag": "0009_verification_policy",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795362210000,
+      "tag": "0010_audit_logs_ip_window",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1795362220000,
+      "tag": "0011_verification_levels",
+      "breakpoints": true
     }
   ]
 }

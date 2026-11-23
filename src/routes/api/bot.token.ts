@@ -11,6 +11,11 @@ import {
   policyForToken,
 } from "../../lib/verification-policy.server.ts";
 import { isVerificationPolicyEnabled } from "../../lib/verification-policy-schema.server.ts";
+import {
+  ProfileSignalsSchema,
+  RiskSignalsSchema,
+  VerificationLevelSchema,
+} from "../../lib/verification-level.server.ts";
 
 type BotTokenDependencies = {
   validateApiKey: (request: Request) => Response | null;
@@ -30,6 +35,10 @@ const Body = z.object({
   expiresAt: z.string().datetime({ offset: true }),
   caseCode: z.string().regex(CASE_CODE_PATTERN).optional(),
   policy: z.record(z.unknown()).optional(),
+  level: VerificationLevelSchema.optional(),
+  autoCandidate: z.boolean().optional(),
+  profileSignals: ProfileSignalsSchema.optional(),
+  riskSignals: RiskSignalsSchema.optional(),
 });
 
 function safeFailureDetails(stage: string, error: unknown) {
@@ -69,8 +78,19 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
       return Response.json({ error: "Missing or invalid required fields" }, { status: 400 });
     }
 
-    const { token, userId, guildId, guildName, guildMemberCount, expiresAt, caseCode } =
-      parsed.data;
+    const {
+      token,
+      userId,
+      guildId,
+      guildName,
+      guildMemberCount,
+      expiresAt,
+      caseCode,
+      level = "low",
+      autoCandidate = false,
+      profileSignals = {},
+      riskSignals = {},
+    } = parsed.data;
     let policy;
     try {
       policy = parseOptionalVerificationPolicy(parsed.data.policy);
@@ -158,6 +178,11 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
             status: "pending",
             referenceId,
             caseCode: caseCode ?? null,
+            initialLevel: level,
+            level,
+            autoCandidate,
+            profileSignals,
+            riskSignals,
             ...(storedPolicy === undefined ? {} : { policy: storedPolicy }),
           })
           .onConflictDoNothing({ target: dependencies.verifyTokens.token })

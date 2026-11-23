@@ -5,6 +5,7 @@ import { auditLogs, suspiciousAttempts, verifyTokens } from "./db/schema.ts";
 import { ensureVerificationState } from "./verification-state.server.ts";
 import { verifyTurnstile } from "./turnstile.server.ts";
 import { cooldownSecondsForAttempt, policyForToken } from "./verification-policy.server.ts";
+import { RiskSignalsSchema, classifyVerificationLevel } from "./verification-level.server.ts";
 
 type PortalDb = ReturnType<typeof getDb>;
 
@@ -29,6 +30,7 @@ export type ChallengeSubmission = {
   vpnTypeDetected: string | null;
   networkFlagged?: boolean | undefined;
   networkFlagReason?: string | null | undefined;
+  intelligenceRecommendation?: string | null | undefined;
   turnstileFetch?: typeof fetch | undefined;
   turnstileEnvironment?: NodeJS.ProcessEnv | undefined;
   now?: Date | undefined;
@@ -38,6 +40,7 @@ export type SubmissionResult = {
   success: boolean;
   passed?: boolean;
   status?: string;
+  level?: string;
   referenceId?: string | null;
   caseCode?: string | null;
   attempts?: number;
@@ -82,6 +85,7 @@ export async function submitVerificationChallenge(
       success: true,
       passed: Boolean(row.completedAt),
       status: row.status,
+      level: row.level,
       referenceId: row.referenceId,
       caseCode: row.caseCode,
       attempts: state.attempts,
@@ -181,29 +185,74 @@ export async function submitVerificationChallenge(
         ).rows[0]?.["count"] ?? 0,
       )
     : 0;
+  const parsedRiskSignals = RiskSignalsSchema.safeParse(row.riskSignals ?? {});
+  const riskSignals = parsedRiskSignals.success ? parsedRiskSignals.data : {};
+  const level = classifyVerificationLevel({
+    initialLevel: row.initialLevel,
+    accountAgeDays,
+    newAccountDays: policy.newAccountDays,
+    riskSignals: {
+      ...riskSignals,
+      defaultAvatar: riskSignals.defaultAvatar || !row.discordAvatar,
+      sharedIp: riskSignals.sharedIp || sameIpUsers >= 3,
+    },
+    vpnDetected,
+    honeypotTriggered,
+    ...(input.intelligenceRecommendation !== undefined
+      ? { intelligenceRecommendation: input.intelligenceRecommendation }
+      : {}),
+  });
   const newAccount = accountAgeDays < policy.newAccountDays;
-  const automaticReason = input.networkFlagged
-    ? (input.networkFlagReason ?? "Network check unavailable")
-    : honeypotTriggered
-      ? "Hidden verification trap activated"
-      : vpnDetected
-        ? "VPN or proxy detected"
-        : newAccount
-          ? "New Discord account"
-          : attempts >= 2
-            ? "Repeated verification attempt"
-            : sameIpUsers >= 3
-              ? "Shared IP used by multiple users"
-              : null;
+  const automaticReason = riskSignals.confirmedAltOfBanned
+    ? "Confirmed banned-user alt"
+    : riskSignals.knownBadIp
+      ? "Known-bad IP"
+      : riskSignals.blocklistHit
+        ? "Blocklist hit"
+        : honeypotTriggered
+          ? "Hidden verification trap activated"
+          : riskSignals.flaggedUserAlt
+            ? "Flagged-user alt"
+            : riskSignals.raidBurst
+              ? "Raid burst active"
+              : level === "high"
+                ? "High-assurance verification is unavailable"
+                : input.networkFlagged
+                  ? (input.networkFlagReason ?? "Network check unavailable")
+                  : vpnDetected
+                    ? "VPN or proxy detected"
+                    : riskSignals.suspiciousUsername
+                      ? "Suspicious username"
+                      : riskSignals.sharedIp || sameIpUsers >= 3
+                        ? "Shared IP used by multiple users"
+                        : newAccount
+                          ? "New Discord account"
+                          : attempts >= 2
+                            ? "Repeated verification attempt"
+                            : null;
   const flagged = Boolean(automaticReason);
   const vpnTerminal = vpnDetected && policy.vpnAction === "block";
   const honeypotTerminal = honeypotTriggered && policy.honeypotAction !== "flag";
   const newAccountTerminal = newAccount && policy.newAccountAction === "block";
-  const finalPassed = proofCorrect && !vpnTerminal && !honeypotTerminal && !newAccountTerminal;
+  const highAssuranceUnavailable = level === "high";
+  const finalPassed =
+    proofCorrect &&
+    !vpnTerminal &&
+    !honeypotTerminal &&
+    !newAccountTerminal &&
+    !highAssuranceUnavailable &&
+    level !== "critical";
   const locked =
     !finalPassed &&
     (attempts >= policy.maxAttempts || vpnTerminal || honeypotTerminal || newAccountTerminal);
-  const terminal = finalPassed || locked || vpnTerminal || honeypotTerminal || newAccountTerminal;
+  const terminal =
+    finalPassed ||
+    locked ||
+    vpnTerminal ||
+    honeypotTerminal ||
+    newAccountTerminal ||
+    highAssuranceUnavailable ||
+    level === "critical";
   const cooldownUntil = terminal
     ? null
     : new Date(now.getTime() + cooldownSecondsForAttempt(policy, attempts) * 1000);
@@ -245,6 +294,7 @@ export async function submitVerificationChallenge(
     cooldownUntil: committedCooldownUntil?.toISOString() ?? null,
     failureReason: !finalPassed ? reason : null,
     locked: committedLocked,
+    level,
   };
 
   const outboxCte = terminal
@@ -300,6 +350,7 @@ export async function submitVerificationChallenge(
           vpn_type = ${vpnType},
           flagged = ${flagged},
           flag_reason = ${reason},
+          level = ${level},
           completed_at = ${finalPassed ? now : null},
           bot_error = ${terminal ? "Callback pending" : null}
       WHERE token = ${input.token}
@@ -331,6 +382,7 @@ export async function submitVerificationChallenge(
         success: true,
         passed: Boolean(current.completedAt),
         status: current.status,
+        level: current.level,
         referenceId: current.referenceId,
         attempts: currentState?.attempts ?? current.attempts,
         cooldownUntil: currentState?.cooldownUntil?.toISOString() ?? null,
@@ -397,6 +449,7 @@ export async function submitVerificationChallenge(
         honeypotTriggered,
         challengeId: input.challengeId,
         callbackQueued: terminal,
+        level,
       },
     });
   } catch (error) {
@@ -410,6 +463,7 @@ export async function submitVerificationChallenge(
     success: true,
     passed: finalPassed,
     status: callbackStatus,
+    level,
     referenceId: row.referenceId,
     caseCode: row.caseCode ?? null,
     attempts: committedAttempts,

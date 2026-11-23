@@ -54,6 +54,7 @@ type TokenInfo = {
   discordUser: { id: string; username: string; avatar: string | null; createdAt: string } | null;
   expiresAt?: string;
   status?: string;
+  level?: "auto" | "low" | "medium" | "high" | "critical";
   completed?: boolean;
   pendingPassed?: boolean;
   referenceId?: string | null;

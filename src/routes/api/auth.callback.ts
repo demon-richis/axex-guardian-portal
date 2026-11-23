@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { eq } from "drizzle-orm";
 import { consumeConfiguredRateLimit } from "../../lib/rate-limit.server.ts";
 import { mapDiscordProviderError } from "../../lib/public-errors.ts";
 
@@ -14,9 +15,13 @@ export const Route = createFileRoute("/api/auth/callback")({
           return Response.redirect(destination, 302);
         };
 
-        const { getDb, redirectUri } = await import("../../lib/db/client.server.ts");
+        const { getDb, redirectUri, snowflakeToDate, checkIp } =
+          await import("../../lib/db/client.server.ts");
         const { clientIp } = await import("../../lib/client-ip.server.ts");
         const { bindOAuthIdentity } = await import("../../lib/discord-identity.server.ts");
+        const { verifyTokens } = await import("../../lib/db/schema.ts");
+        const { analyzePortalUser } = await import("../../lib/intelligence.server.ts");
+        const { attemptAutoVerification } = await import("../../lib/verification-auto.server.ts");
         const { consumeOAuthState, createSessionCookie } =
           await import("../../lib/session.server.ts");
 
@@ -88,9 +93,10 @@ export const Route = createFileRoute("/api/auth/callback")({
               redirect_uri: redirectUri(request),
             }),
           });
-          const tokenBody = (await tokenRes.json().catch(() => null)) as
-            | { access_token?: string; error?: string }
-            | null;
+          const tokenBody = (await tokenRes.json().catch(() => null)) as {
+            access_token?: string;
+            error?: string;
+          } | null;
           if (!tokenRes.ok || !tokenBody?.access_token) {
             const providerCode =
               typeof tokenBody?.error === "string" && /^[a-z_]{1,40}$/.test(tokenBody.error)
@@ -123,8 +129,13 @@ export const Route = createFileRoute("/api/auth/callback")({
             username: string;
             global_name?: string | null;
             avatar: string | null;
+            premium_type?: number | null;
+            banner?: string | null;
+            avatar_decoration_data?: unknown | null;
+            bio?: string | null;
           };
-          const binding = await bindOAuthIdentity(getDb(), state.token, {
+          const db = getDb();
+          const binding = await bindOAuthIdentity(db, state.token, {
             id: user.id,
             username: user.username,
             globalName: user.global_name,
@@ -142,6 +153,44 @@ export const Route = createFileRoute("/api/auth/callback")({
             const publicReason = bindingErrors[binding.reason] ?? "oauth_unknown";
             console.error("[auth/callback] OAuth identity binding refused:", binding.reason);
             return back(`error=${publicReason}`);
+          }
+
+          const observedIp = clientIp(request) || "";
+          const tokenRow = (
+            await db
+              .select({ guildId: verifyTokens.guildId })
+              .from(verifyTokens)
+              .where(eq(verifyTokens.token, state.token))
+              .limit(1)
+          )[0];
+          if (!tokenRow) return back("error=oauth_token_invalid");
+          const intelligence = await analyzePortalUser(user.id, tokenRow.guildId, {
+            username: user.username,
+            avatar: user.avatar,
+            createdTimestamp: snowflakeToDate(user.id).getTime(),
+            ip: observedIp,
+          });
+          try {
+            await attemptAutoVerification(
+              db,
+              state.token,
+              observedIp,
+              {
+                ...(user.premium_type !== undefined ? { premiumType: user.premium_type } : {}),
+                ...(user.banner !== undefined ? { banner: user.banner } : {}),
+                avatarDecoration: Boolean(user.avatar_decoration_data),
+                ...(user.bio !== undefined ? { bio: user.bio } : {}),
+                ...(intelligence?.recommendation !== undefined
+                  ? { intelligenceRecommendation: intelligence.recommendation }
+                  : {}),
+              },
+              (ip) => checkIp(ip),
+            );
+          } catch (error) {
+            console.error(
+              "[auth/callback] Optional auto-verification check failed:",
+              error instanceof Error ? error.name : "unknown",
+            );
           }
 
           console.log("[auth/callback] OAuth identity matched the bot-issued target");

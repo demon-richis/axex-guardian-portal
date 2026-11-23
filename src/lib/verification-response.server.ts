@@ -23,6 +23,7 @@ export function publicVerificationSummary(
     guildMemberCount: row.guildMemberCount ?? 0,
     expiresAt: row.expiresAt.toISOString(),
     status: row.status,
+    level: row.level,
     referenceId: row.referenceId,
     caseCode: row.caseCode,
     attempts,

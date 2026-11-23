@@ -11,6 +11,7 @@ import {
   uniqueIndex,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import type { ProfileSignals, RiskSignals } from "../verification-level.server.ts";
 
 export const guildConfigs = pgTable("guild_configs", {
   guildId: text("guild_id").primaryKey(),
@@ -39,6 +40,17 @@ export const verifyTokens = pgTable(
     referenceId: text("reference_id"),
     caseCode: text("case_code"),
     policy: jsonb("policy").$type<Record<string, unknown>>(),
+    initialLevel: text("initial_level")
+      .$type<"auto" | "low" | "medium" | "high" | "critical">()
+      .default("low")
+      .notNull(),
+    level: text("level")
+      .$type<"auto" | "low" | "medium" | "high" | "critical">()
+      .default("low")
+      .notNull(),
+    autoCandidate: boolean("auto_candidate").default(false).notNull(),
+    profileSignals: jsonb("profile_signals").$type<ProfileSignals>().default({}).notNull(),
+    riskSignals: jsonb("risk_signals").$type<RiskSignals>().default({}).notNull(),
     challengeId: text("challenge_id"),
     challengeAnswerHash: text("challenge_answer_hash"),
     challengePrompt: text("challenge_prompt"),

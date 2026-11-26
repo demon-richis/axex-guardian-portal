@@ -134,3 +134,10 @@ Deploy AxexOrbit and configure its `ORBIT_SIGNING_KEY` and `ORBIT_SITE_SECRET` b
 - Orbit unreachable with `networkFailMode=open_flag`: verification may pass with an Orbit outage flag/reason.
 - Orbit proof failures count as normal failed attempts and follow configured cooldown/lockout policy.
 - Each solved Orbit token is replay-protected and is bound to one verification identity and guild.
+## Legal pages
+
+The legal pages are available at `[PORTAL URL]/terms` and `[PORTAL URL]/privacy`.
+
+## License
+
+This repository is proprietary and All Rights Reserved. See [LICENSE](LICENSE).

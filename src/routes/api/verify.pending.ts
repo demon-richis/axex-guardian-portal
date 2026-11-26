@@ -23,7 +23,7 @@ export const Route = createFileRoute("/api/verify/pending")({
         try {
           const { verificationState, verifyTokens } = await import("@/lib/db/schema");
           const { getDb } = await import("@/lib/db/client.server");
-          const { policyForToken } = await import("@/lib/verification-policy.server");
+          const { policyForVerificationLevel } = await import("@/lib/verification-policy.server");
           const db = getDb();
           const state = (
             await db
@@ -41,18 +41,20 @@ export const Route = createFileRoute("/api/verify/pending")({
             .select({
               token: verifyTokens.token,
               status: verifyTokens.status,
+              used: verifyTokens.used,
               failureReason: verifyTokens.failureReason,
               expiresAt: verifyTokens.expiresAt,
               referenceId: verifyTokens.referenceId,
               caseCode: verifyTokens.caseCode,
               policy: verifyTokens.policy,
+              level: verifyTokens.level,
             })
             .from(verifyTokens)
             .where(
               and(
                 eq(verifyTokens.userId, userId.data),
                 eq(verifyTokens.guildId, guildId.data),
-                inArray(verifyTokens.status, ["pending", "bot_update_pending"]),
+                inArray(verifyTokens.status, ["pending", "bot_update_pending", "pending_review"]),
               ),
             )
             .orderBy(desc(verifyTokens.createdAt))
@@ -60,13 +62,16 @@ export const Route = createFileRoute("/api/verify/pending")({
 
           const row = existing[0];
           const attempts = state?.attempts ?? 0;
-          const policy = policyForToken(row?.policy ?? state?.policy);
+          const policy = policyForVerificationLevel(
+            row?.policy ?? state?.policy,
+            row?.level ?? "low",
+          );
           const locked = Boolean(state?.lockedAt) || attempts >= policy.maxAttempts;
           const coolingDown = Boolean(
             state?.cooldownUntil && state.cooldownUntil.getTime() > Date.now(),
           );
           const token =
-            row && row.expiresAt.getTime() > Date.now() && !locked && !coolingDown
+            row && !row.used && row.expiresAt.getTime() > Date.now() && !locked && !coolingDown
               ? row.token
               : null;
           console.log("[verify/pending] Result:", {
@@ -83,6 +88,7 @@ export const Route = createFileRoute("/api/verify/pending")({
             failureReason: row?.failureReason ?? null,
             referenceId: state?.lastReferenceId ?? row?.referenceId ?? null,
             caseCode: row?.caseCode ?? null,
+            expiresAt: row?.expiresAt?.toISOString() ?? null,
           });
         } catch (error) {
           console.error("[verify/pending] Error:", error instanceof Error ? error.name : "unknown");

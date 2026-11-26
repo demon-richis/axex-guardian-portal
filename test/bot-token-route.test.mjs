@@ -22,6 +22,7 @@ const migrationFiles = [
   "0009_verification_policy.sql",
   "0010_audit_logs_ip_window.sql",
   "0011_verification_levels.sql",
+  "0012_verification_rules_acknowledgement.sql",
 ];
 const TEST_API_KEY = "unit-test-api-key-only";
 
@@ -98,6 +99,36 @@ test("token creation succeeds against the current isolated schema", async () => 
     assert.equal(rows.length, 1);
     assert.equal(rows[0].userId, "123456789012345678");
     assert.equal(rows[0].guildId, "234567890123456789");
+  } finally {
+    await client.close();
+  }
+});
+
+test("reusing an active token extends its expiry when a longer member timeout is configured", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const firstExpiry = new Date(Date.now() + 10 * 60 * 1000);
+    const first = await handleBotTokenRequest(
+      validRequest({ token: "short-lived-token", expiresAt: firstExpiry.toISOString() }),
+      dependencies(db),
+    );
+    assert.equal(first.status, 200);
+
+    const requestedExpiry = new Date(Date.now() + 90 * 60 * 1000);
+    const response = await handleBotTokenRequest(
+      validRequest({
+        token: "replacement-token",
+        expiresAt: requestedExpiry.toISOString(),
+      }),
+      dependencies(db),
+    );
+    const data = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(data.reused, true);
+    assert.equal(data.token, "short-lived-token");
+    assert.equal(new Date(data.expiresAt).getTime(), requestedExpiry.getTime());
+    const [stored] = await db.select().from(schema.verifyTokens);
+    assert.equal(stored.expiresAt.getTime(), requestedExpiry.getTime());
   } finally {
     await client.close();
   }

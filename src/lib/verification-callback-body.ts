@@ -4,7 +4,8 @@ export const verificationCallbackBody = z
   .object({
     token: z.string().min(1).max(200),
     challengeId: z.string().regex(/^[a-f0-9]{48}$/),
-    turnstileToken: z.string().min(1).max(2048),
+    turnstileToken: z.string().min(1).max(2048).optional(),
+    orbitToken: z.string().min(1).max(2048).optional(),
     discordId: z.string().max(40).optional(),
     discordTag: z.string().max(100).optional(),
     discordAvatar: z.string().max(200).nullable().optional(),
@@ -16,4 +17,5 @@ export const verificationCallbackBody = z
     honeypotTriggered: z.boolean().optional(),
     honeypot: z.string().max(200).optional(),
   })
-  .strict();
+  .strict()
+  .refine((body) => Boolean(body.turnstileToken) !== Boolean(body.orbitToken));

@@ -4,7 +4,7 @@ import type { getDb } from "./db/client.server";
 import { verifyTokens } from "./db/schema.ts";
 import { ensureVerificationState } from "./verification-state.server.ts";
 import { turnstileContext } from "./turnstile.server.ts";
-import { policyForToken } from "./verification-policy.server.ts";
+import { policyForVerificationLevel } from "./verification-policy.server.ts";
 
 type PortalDb = ReturnType<typeof getDb>;
 
@@ -15,10 +15,21 @@ type PublicChallenge = {
 };
 
 type ChallengeResult =
-  | { success: true; challenge: PublicChallenge }
+  | {
+      success: true;
+      challenge: PublicChallenge;
+      level: "auto" | "low" | "medium" | "high" | "critical";
+    }
   | {
       success: false;
-      error: "invalid_token" | "identity_required" | "expired" | "used" | "locked" | "cooldown";
+      error:
+        | "invalid_token"
+        | "identity_required"
+        | "expired"
+        | "used"
+        | "locked"
+        | "cooldown"
+        | "rules_ack_required";
       attempts?: number;
       cooldownUntil?: string;
     };
@@ -52,7 +63,7 @@ export async function issueVerificationChallenge(
   if (!row) return { success: false, error: "invalid_token" };
   const state = await ensureVerificationState(db, row.guildId, row.userId, now);
   if (!state) return { success: false, error: "invalid_token" };
-  const policy = policyForToken(row.policy ?? state.policy);
+  const policy = policyForVerificationLevel(row.policy ?? state.policy, row.level);
   if (row.used) return { success: false, error: "used" };
   if (row.expiresAt.getTime() <= now.getTime()) return { success: false, error: "expired" };
   if (row.status === "locked" || state.lockedAt || state.attempts >= policy.maxAttempts) {
@@ -69,10 +80,13 @@ export async function issueVerificationChallenge(
   if (!row.discordId || row.discordId !== row.userId) {
     return { success: false, error: "identity_required" };
   }
+  if (row.level === "medium" && !row.rulesAcknowledgedAt) {
+    return { success: false, error: "rules_ack_required" };
+  }
 
   const active = publicChallenge(row);
   if (active && !row.challengeConsumedAt && row.challengeExpiresAt!.getTime() > now.getTime()) {
-    return { success: true, challenge: active };
+    return { success: true, challenge: active, level: row.level };
   }
 
   const challengeId = randomBytes(24).toString("hex");
@@ -116,6 +130,7 @@ export async function issueVerificationChallenge(
         expiresAt: challengeExpiresAt.toISOString(),
         turnstileCData: turnstileContext(token, row.discordId, row.guildId, challengeId),
       },
+      level: row.level,
     };
   }
 
@@ -130,7 +145,7 @@ export async function issueVerificationChallenge(
     !latest.challengeConsumedAt &&
     latest.challengeExpiresAt!.getTime() > now.getTime()
   ) {
-    return { success: true, challenge: latestChallenge };
+    return { success: true, challenge: latestChallenge, level: latest.level };
   }
   return { success: false, error: "cooldown", attempts: state.attempts };
 }

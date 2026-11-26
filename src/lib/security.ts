@@ -1,18 +1,18 @@
 import { z } from "zod";
 
-function contentSecurityPolicy(nonce: string): string {
+function contentSecurityPolicy(nonce: string, orbitOrigin: string | null): string {
   return [
     "default-src 'self'",
     "base-uri 'self'",
     "object-src 'none'",
     "frame-ancestors 'none'",
     "form-action 'self'",
-    `script-src 'self' 'nonce-${nonce}' https://challenges.cloudflare.com`,
+    `script-src 'self' 'nonce-${nonce}' https://challenges.cloudflare.com${orbitOrigin ? ` ${orbitOrigin}` : ""}`,
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: https://cdn.discordapp.com https://*.discordapp.com",
     "font-src 'self' https://fonts.gstatic.com",
-    "connect-src 'self' https://challenges.cloudflare.com https://discord.com",
-    "frame-src https://challenges.cloudflare.com",
+    `connect-src 'self' https://challenges.cloudflare.com https://discord.com${orbitOrigin ? ` ${orbitOrigin}` : ""}`,
+    `frame-src https://challenges.cloudflare.com${orbitOrigin ? ` ${orbitOrigin}` : ""}`,
   ].join("; ");
 }
 
@@ -31,7 +31,14 @@ export function applySecurityHeaders(
   nonce: string,
 ): Response {
   const headers = new Headers(response.headers);
-  headers.set("Content-Security-Policy", contentSecurityPolicy(nonce));
+  let orbitOrigin: string | null = null;
+  try {
+    const configuredOrbitUrl = process.env["ORBIT_BASE_URL"];
+    if (configuredOrbitUrl) orbitOrigin = new URL(configuredOrbitUrl).origin;
+  } catch {
+    orbitOrigin = null;
+  }
+  headers.set("Content-Security-Policy", contentSecurityPolicy(nonce, orbitOrigin));
   headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains; preload");
   headers.set("X-Content-Type-Options", "nosniff");
   headers.set("Referrer-Policy", "no-referrer");
@@ -76,7 +83,10 @@ export function validateRuntimeEnvironment(
       DISCORD_CLIENT_SECRET: z.string().min(1),
       DISCORD_REDIRECT_URI: z.string().url(),
       TURNSTILE_SITE_KEY: z.string().min(1),
+      TURNSTILE_INTERACTIVE_SITE_KEY: z.string().min(1),
       TURNSTILE_SECRET_KEY: z.string().min(1),
+      ORBIT_BASE_URL: z.string().url().optional(),
+      ORBIT_SITE_SECRET: z.string().min(32).optional(),
       BOT_WEBHOOK_URL: z.string().url(),
       BOT_TO_PORTAL_KEY: z.string().min(32).optional(),
       PORTAL_TO_BOT_KEY: z.string().min(32).optional(),
@@ -113,11 +123,28 @@ export function validateRuntimeEnvironment(
     RATE_LIMIT_BACKEND: rateLimitBackend,
     INTELLIGENCE_URL: env["INTELLIGENCE_URL"],
     INTELLIGENCE_API_KEY: env["INTELLIGENCE_API_KEY"],
+    TURNSTILE_INTERACTIVE_SITE_KEY: env["TURNSTILE_INTERACTIVE_SITE_KEY"],
+    ORBIT_BASE_URL: env["ORBIT_BASE_URL"],
+    ORBIT_SITE_SECRET: env["ORBIT_SITE_SECRET"],
   });
   if (!result.success) {
     const details = result.error.issues
       .map((issue) => `${issue.path.join(".") || "environment"}: ${issue.message}`)
       .join("; ");
     throw new Error(`Invalid production environment: ${details}`);
+  }
+  if (Boolean(env["ORBIT_BASE_URL"]) !== Boolean(env["ORBIT_SITE_SECRET"])) {
+    throw new Error("ORBIT_BASE_URL and ORBIT_SITE_SECRET must be configured together");
+  }
+  if (env["ORBIT_BASE_URL"]) {
+    const orbitUrl = new URL(env["ORBIT_BASE_URL"]);
+    if (
+      orbitUrl.protocol !== "https:" ||
+      orbitUrl.pathname !== "/" ||
+      orbitUrl.search ||
+      orbitUrl.hash
+    ) {
+      throw new Error("ORBIT_BASE_URL must be an HTTPS origin without a path");
+    }
   }
 }

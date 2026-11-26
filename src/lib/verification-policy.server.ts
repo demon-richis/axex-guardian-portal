@@ -57,6 +57,22 @@ export function policyForToken(input: unknown): VerificationPolicy {
   }
 }
 
+export function policyForVerificationLevel(
+  input: unknown,
+  level: "auto" | "low" | "medium" | "high" | "critical",
+): VerificationPolicy {
+  const policy = policyForToken(input);
+  if (level !== "medium") return policy;
+  return {
+    ...policy,
+    maxAttempts: Math.max(1, policy.maxAttempts - 1),
+    cooldownsSeconds: policy.cooldownsSeconds.map((seconds) => Math.min(604_800, seconds * 2)) as [
+      number,
+      number,
+    ],
+  };
+}
+
 export function cooldownSecondsForAttempt(policy: VerificationPolicy, attempt: number): number {
   const index = Math.max(0, Math.min(policy.cooldownsSeconds.length - 1, attempt - 1));
   return policy.cooldownsSeconds[index] ?? policy.cooldownsSeconds.at(-1) ?? 0;

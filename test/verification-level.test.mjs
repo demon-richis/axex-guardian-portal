@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { classifyVerificationLevel } from "../src/lib/verification-level.server.ts";
+import { policyForVerificationLevel } from "../src/lib/verification-policy.server.ts";
 
 const base = {
   initialLevel: "low",
@@ -60,4 +61,27 @@ test("auto requires policy, candidate, positive signal, adult account age and no
     classifyVerificationLevel({ ...eligible, intelligenceRecommendation: "challenge" }),
     "medium",
   );
+});
+
+test("medium level reduces attempts and doubles cooldowns with safe bounds", () => {
+  const normal = policyForVerificationLevel(
+    { maxAttempts: 3, cooldownsSeconds: [180, 10_800] },
+    "low",
+  );
+  assert.equal(normal.maxAttempts, 3);
+  assert.deepEqual(normal.cooldownsSeconds, [180, 10_800]);
+
+  const medium = policyForVerificationLevel(
+    { maxAttempts: 3, cooldownsSeconds: [180, 10_800] },
+    "medium",
+  );
+  assert.equal(medium.maxAttempts, 2);
+  assert.deepEqual(medium.cooldownsSeconds, [360, 21_600]);
+
+  const bounded = policyForVerificationLevel(
+    { maxAttempts: 1, cooldownsSeconds: [86_400, 604_800] },
+    "medium",
+  );
+  assert.equal(bounded.maxAttempts, 1);
+  assert.deepEqual(bounded.cooldownsSeconds, [172_800, 604_800]);
 });

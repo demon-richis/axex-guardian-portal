@@ -40,6 +40,8 @@ type Challenge = {
   challengeId: string;
   expiresAt: string;
   turnstileCData: string;
+  mode?: "managed" | "interactive" | "orbit";
+  orbitBaseUrl?: string;
 };
 
 const DEMO_CHALLENGE: Challenge = {
@@ -57,6 +59,7 @@ type TokenInfo = {
   level?: "auto" | "low" | "medium" | "high" | "critical";
   completed?: boolean;
   pendingPassed?: boolean;
+  reviewPending?: boolean;
   referenceId?: string | null;
   caseCode?: string | null;
   attempts?: number;
@@ -67,7 +70,8 @@ type TokenInfo = {
   botError?: string | null;
 };
 type ErrorKind = PublicErrorKind;
-type Phase = "loading" | "auth" | "vpn" | "captcha" | "cooldown" | "pending" | "done" | "error";
+type Phase =
+  "loading" | "auth" | "vpn" | "rules" | "captcha" | "cooldown" | "pending" | "done" | "error";
 
 const ERRORS: Record<ErrorKind, [string, string]> = {
   invalid: ["Invalid Link", "This verification link is invalid or has expired."],
@@ -231,8 +235,48 @@ type TurnstileApi = {
 };
 
 type TurnstileWindow = Window & { turnstile?: TurnstileApi };
+type OrbitApi = {
+  render: (
+    element: HTMLElement,
+    options: {
+      theme: "auto";
+      getSession: () => Promise<string>;
+      onSuccess: (token: string) => void;
+      onFail: () => void;
+      onError: () => void;
+      onHelp: () => void;
+    },
+  ) => { destroy: () => void };
+};
+type OrbitWindow = Window & { AxexOrbit?: OrbitApi };
 
 let turnstileScriptPromise: Promise<TurnstileApi> | null = null;
+let orbitScriptPromise: Promise<OrbitApi> | null = null;
+
+function loadOrbitScript(baseUrl: string): Promise<OrbitApi> {
+  const orbitWindow = window as OrbitWindow;
+  if (orbitWindow.AxexOrbit) return Promise.resolve(orbitWindow.AxexOrbit);
+  if (orbitScriptPromise) return orbitScriptPromise;
+  orbitScriptPromise = new Promise<OrbitApi>((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = `${baseUrl}/widget/embed.js`;
+    script.async = true;
+    script.defer = true;
+    const nonceSource = document.querySelector<HTMLScriptElement>("script[nonce]");
+    if (nonceSource?.nonce) script.nonce = nonceSource.nonce;
+    script.onload = () => {
+      if (orbitWindow.AxexOrbit) resolve(orbitWindow.AxexOrbit);
+      else reject(new Error("Orbit widget did not initialize"));
+    };
+    script.onerror = () => reject(new Error("Orbit widget failed to load"));
+    document.head.appendChild(script);
+  }).catch((error: unknown) => {
+    document.querySelector<HTMLScriptElement>('script[src$="/widget/embed.js"]')?.remove();
+    orbitScriptPromise = null;
+    throw error;
+  });
+  return orbitScriptPromise;
+}
 
 function loadTurnstileScript(): Promise<TurnstileApi> {
   const turnstileWindow = window as TurnstileWindow;
@@ -342,6 +386,7 @@ function VerifyPage() {
   const [networkChecked, setNetworkChecked] = useState(false);
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [turnstileSiteKey, setTurnstileSiteKey] = useState("");
+  const [rulesAccepted, setRulesAccepted] = useState(false);
 
   const attemptKey = `axex:verify-attempts:${effectiveToken}`;
 
@@ -390,6 +435,44 @@ function VerifyPage() {
     setPhase("error");
   }, []);
 
+  const requestChallenge = useCallback(async () => {
+    setBusy(true);
+    try {
+      const challengeResponse = await fetchVerification("/api/challenge", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+        cache: "no-store",
+      });
+      const challengeResult = (await challengeResponse.json().catch(() => null)) as {
+        success?: boolean;
+        challenge?: Challenge;
+        siteKey?: string;
+        challengeMode?: "managed" | "interactive" | "orbit";
+        orbitBaseUrl?: string;
+        error?: string;
+      } | null;
+      if (!challengeResponse.ok || !challengeResult?.success || !challengeResult.challenge) {
+        fail(
+          mapVerificationErrorCode(
+            challengeResult?.error ??
+              (challengeResponse.status >= 500 ? "challenge_unavailable" : "invalid_request"),
+          ),
+        );
+        return;
+      }
+      setChallenge({
+        ...challengeResult.challenge,
+        mode: challengeResult.challengeMode ?? "managed",
+        ...(challengeResult.orbitBaseUrl ? { orbitBaseUrl: challengeResult.orbitBaseUrl } : {}),
+      });
+      setTurnstileSiteKey(challengeResult.siteKey ?? "");
+      setPhase("captcha");
+    } finally {
+      setBusy(false);
+    }
+  }, [fail, token]);
+
   const runIpCheck = useCallback(
     async (signal?: AbortSignal) => {
       console.log("[verify] Step 2: Starting IP check");
@@ -407,6 +490,7 @@ function VerifyPage() {
           status?: string;
           isVPN?: boolean;
           type?: string | null;
+          level?: TokenInfo["level"];
           error?: string;
         } | null;
         if (!response.ok) {
@@ -427,36 +511,27 @@ function VerifyPage() {
           isVPN: result.isVPN === true,
         });
         if (signal?.aborted) return;
+        const level = result.level;
+        if (level) {
+          setInfo((current) => (current ? { ...current, level } : current));
+        }
+        if (result.status === "quarantined") {
+          fail("lockout");
+          return;
+        }
         setNetworkChecked(true);
         if (result.status === "blocked" || result.isVPN) {
           track(token, "network_blocked");
           setPhase("vpn");
         } else if (result.status === "clear") {
           track(token, "network_clear");
-          const challengeResponse = await fetchVerification("/api/challenge", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ token }),
-            cache: "no-store",
-          });
-          const challengeResult = (await challengeResponse.json().catch(() => null)) as {
-            success?: boolean;
-            challenge?: Challenge;
-            siteKey?: string;
-            error?: string;
-          } | null;
-          if (!challengeResponse.ok || !challengeResult?.success || !challengeResult.challenge) {
-            fail(
-              mapVerificationErrorCode(
-                challengeResult?.error ??
-                  (challengeResponse.status >= 500 ? "challenge_unavailable" : "invalid_request"),
-              ),
-            );
+          const level = result.level ?? info?.level ?? "low";
+          if (level === "medium") {
+            setRulesAccepted(false);
+            setPhase("rules");
             return;
           }
-          setChallenge(challengeResult.challenge);
-          setTurnstileSiteKey(challengeResult.siteKey ?? "");
-          setPhase("captcha");
+          await requestChallenge();
         } else {
           track(token, "network_unavailable");
           fail("network");
@@ -470,8 +545,34 @@ function VerifyPage() {
         if (!signal?.aborted) setBusy(false);
       }
     },
-    [fail, token],
+    [fail, info?.level, requestChallenge, token],
   );
+
+  const acknowledgeRules = useCallback(async () => {
+    setBusy(true);
+    try {
+      const response = await fetchVerification("/api/rules/ack", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token }),
+        cache: "no-store",
+      });
+      const result = (await response.json().catch(() => null)) as {
+        success?: boolean;
+        error?: string;
+      } | null;
+      if (!response.ok || !result?.success) {
+        fail(mapVerificationErrorCode(result?.error ?? "service_unavailable"));
+        return;
+      }
+      await requestChallenge();
+    } catch (error) {
+      console.error("[verify] Could not acknowledge server rules:", error);
+      fail("serviceUnavailable");
+    } finally {
+      setBusy(false);
+    }
+  }, [fail, requestChallenge, token]);
 
   const startDemo = useCallback(() => {
     console.log("[verify] Demo started; moving to Step 2");
@@ -629,7 +730,7 @@ function VerifyPage() {
         body: JSON.stringify({
           token,
           challengeId: challenge.challengeId,
-          turnstileToken,
+          ...(challenge.mode === "orbit" ? { orbitToken: turnstileToken } : { turnstileToken }),
           discordId: u?.id,
           discordTag: u?.username,
           discordAvatar: u?.avatar,
@@ -673,6 +774,9 @@ function VerifyPage() {
       const result = await submitAttempt(turnstileToken, clickMs, honeypotTriggered);
       if (result?.success && result.passed) {
         console.log("[verify] Server accepted the challenge proof");
+        if (result.status === "pending_review") {
+          setInfo((current) => (current ? { ...current, reviewPending: true } : current));
+        }
         track(token, "captcha_passed");
         if (result.status === "completed") {
           track(token, "verification_completed");
@@ -718,6 +822,11 @@ function VerifyPage() {
         void runIpCheck();
         return;
       }
+      if (result?.error === "challenge_escalated") {
+        console.log("[verify] Assurance level increased; loading the required challenge");
+        void runIpCheck();
+        return;
+      }
       if (mappedError.kind === "turnstileRateLimited") {
         fail("turnstileRateLimited");
         return;
@@ -756,7 +865,7 @@ function VerifyPage() {
   const step =
     phase === "auth" || phase === "vpn" || phase === "loading"
       ? 0
-      : phase === "captcha" || phase === "cooldown" || phase === "pending"
+      : phase === "rules" || phase === "captcha" || phase === "cooldown" || phase === "pending"
         ? 1
         : 2;
   const user = info?.discordUser;
@@ -871,6 +980,37 @@ function VerifyPage() {
             </motion.div>
           )}
 
+          {phase === "rules" && info && (
+            <motion.div key="rules" {...fade} className="space-y-5">
+              <Header info={info} />
+              <div className="rounded-xl border border-border bg-[var(--surface)] p-4">
+                <h2 className="text-lg font-bold text-foreground">Server rules acknowledgement</h2>
+                <p className="mt-2 text-sm leading-6 text-muted-foreground">
+                  Before the additional security check, confirm that you have read and agree to
+                  follow this server's rules.
+                </p>
+                <label className="mt-4 flex cursor-pointer items-start gap-3 text-sm text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={rulesAccepted}
+                    onChange={(event) => setRulesAccepted(event.currentTarget.checked)}
+                    className="mt-1 h-4 w-4 accent-[var(--red)]"
+                  />
+                  <span>I have read and agree to follow the server rules.</span>
+                </label>
+              </div>
+              <PrimaryButton onClick={acknowledgeRules} disabled={!rulesAccepted || busy}>
+                Continue to security check
+              </PrimaryButton>
+              {(info.caseCode ?? info.referenceId) && (
+                <ReferenceId
+                  referenceId={(info.caseCode ?? info.referenceId) as string}
+                  className="justify-center"
+                />
+              )}
+            </motion.div>
+          )}
+
           {(phase === "auth" || phase === "vpn") && info && (
             <motion.div key="auth" {...fade} className="space-y-4">
               <Header info={info} />
@@ -952,11 +1092,13 @@ function VerifyPage() {
           {phase === "captcha" && info && user && challenge && (
             <motion.div key="captcha" {...fade}>
               <Captcha
+                token={token}
                 info={info}
                 user={user}
                 ageDays={ageDays ?? 0}
                 challenge={challenge}
                 siteKey={turnstileSiteKey}
+                orbitBaseUrl={challenge.orbitBaseUrl}
                 demoMode={demoMode}
                 onSubmit={submitAnswer}
                 onTurnstileError={handleTurnstileError}
@@ -969,9 +1111,13 @@ function VerifyPage() {
               <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-full border border-[var(--green)]/30 bg-[var(--green-soft)]">
                 <span className="h-6 w-6 animate-spin rounded-full border-2 border-[var(--green)]/20 border-t-[var(--green)]" />
               </div>
-              <h2 className="text-xl font-bold text-foreground">Verification accepted</h2>
+              <h2 className="text-xl font-bold text-foreground">
+                {info.reviewPending ? "Under review" : "Verification accepted"}
+              </h2>
               <p className="text-sm leading-6 text-muted-foreground">
-                We are notifying Discord now. This usually takes a few seconds. Keep this tab open.
+                {info.reviewPending
+                  ? "Your challenge is complete. A server administrator must review your account before access is granted."
+                  : "We are notifying Discord now. This usually takes a few seconds. Keep this tab open."}
               </p>
               {(info.caseCode ?? info.referenceId) && (
                 <ReferenceId
@@ -1306,20 +1452,24 @@ function Pill({ children, tone }: { children: React.ReactNode; tone: "g" | "n" }
 }
 
 function Captcha({
+  token,
   info,
   user,
   ageDays,
   challenge,
   siteKey,
+  orbitBaseUrl,
   demoMode,
   onSubmit,
   onTurnstileError,
 }: {
+  token: string;
   info: TokenInfo;
   user: NonNullable<TokenInfo["discordUser"]>;
   ageDays: number;
   challenge: Challenge;
   siteKey: string;
+  orbitBaseUrl?: string | undefined;
   demoMode: boolean;
   onSubmit: (
     turnstileToken: string,
@@ -1333,6 +1483,7 @@ function Captcha({
   const [retryRequired, setRetryRequired] = useState(false);
   const widgetRef = useRef<HTMLDivElement>(null);
   const widgetId = useRef<string | null>(null);
+  const orbitWidgetRef = useRef<{ destroy: () => void } | null>(null);
   const startedAt = useRef(Date.now());
   const done = useRef(false);
 
@@ -1341,6 +1492,60 @@ function Captcha({
     : `https://cdn.discordapp.com/embed/avatars/${Number(BigInt(user.id) >> 22n) % 6}.png`;
 
   useEffect(() => {
+    if (challenge.mode === "orbit") {
+      if (!orbitBaseUrl || !widgetRef.current) return;
+      let active = true;
+      void loadOrbitScript(orbitBaseUrl)
+        .then((orbit) => {
+          if (!active || !widgetRef.current || done.current) return;
+          orbitWidgetRef.current = orbit.render(widgetRef.current, {
+            theme: "auto",
+            getSession: async () => {
+              const response = await fetchVerification("/api/orbit/session", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ token }),
+                cache: "no-store",
+              });
+              const result = (await response.json().catch(() => null)) as {
+                success?: boolean;
+                session?: string;
+              } | null;
+              if (!response.ok || !result?.success || !result.session) {
+                throw new Error("Orbit session is unavailable");
+              }
+              return result.session;
+            },
+            onSuccess: (proof) => {
+              if (done.current) return;
+              done.current = true;
+              setRetryRequired(false);
+              void onSubmit(proof, Date.now() - startedAt.current, honeypotTriggered.current).then(
+                (result) => {
+                  if (result !== "retry") return;
+                  done.current = false;
+                  setRetryRequired(true);
+                },
+              );
+            },
+            onFail: () => setRetryRequired(true),
+            onError: () => onTurnstileError?.("orbit_service_unavailable"),
+            onHelp: () => setRetryRequired(true),
+          });
+        })
+        .catch((loadError: unknown) => {
+          if (!active) return;
+          console.error("[verify] Could not initialize Orbit:", loadError);
+          onTurnstileError?.("orbit_script_load_failed");
+        });
+
+      return () => {
+        active = false;
+        orbitWidgetRef.current?.destroy();
+        orbitWidgetRef.current = null;
+        done.current = false;
+      };
+    }
     if (demoMode || !siteKey || !widgetRef.current) return;
     let active = true;
     void loadTurnstileScript()
@@ -1395,7 +1600,16 @@ function Captcha({
       widgetId.current = null;
       done.current = false;
     };
-  }, [challenge.turnstileCData, demoMode, onSubmit, onTurnstileError, siteKey]);
+  }, [
+    challenge.mode,
+    challenge.turnstileCData,
+    demoMode,
+    onSubmit,
+    onTurnstileError,
+    orbitBaseUrl,
+    siteKey,
+    token,
+  ]);
 
   return (
     <motion.div className="space-y-4">
@@ -1474,12 +1688,18 @@ function Captcha({
           Human Verification
         </p>
         <p className="mt-1.5 text-sm text-foreground">Complete the security check to continue.</p>
-        {demoMode || !siteKey ? (
+        {demoMode ? (
           <PrimaryButton onClick={() => void onSubmit("dev-bypass", 0, honeypotTriggered.current)}>
-            {demoMode ? "Complete demo verification" : "Complete local verification"}
+            Complete demo verification
           </PrimaryButton>
-        ) : (
+        ) : challenge.mode === "orbit" && orbitBaseUrl ? (
+          <div ref={widgetRef} className="mt-3 flex min-h-[72px] justify-center" />
+        ) : siteKey ? (
           <div ref={widgetRef} className="mt-3 flex min-h-[65px] justify-center" />
+        ) : (
+          <p role="alert" className="mt-3 text-center text-xs text-destructive">
+            The verification provider is unavailable. Please try again later.
+          </p>
         )}
         {challengeExpired && (
           <p className="mt-3 text-center text-xs text-[var(--amber)]">

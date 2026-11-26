@@ -26,6 +26,7 @@ async function freshDb() {
     "0009_verification_policy.sql",
     "0010_audit_logs_ip_window.sql",
     "0011_verification_levels.sql",
+    "0012_verification_rules_acknowledgement.sql",
   ]) {
     const migration = await readFile(join(migrationDir, file), "utf8");
     await client.exec(migration.replaceAll("--> statement-breakpoint", ""));

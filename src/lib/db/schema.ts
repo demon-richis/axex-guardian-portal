@@ -60,6 +60,7 @@ export const verifyTokens = pgTable(
     challengeConsumedAt: timestamp("challenge_consumed_at", { withTimezone: true }),
     challengeClaimId: text("challenge_claim_id"),
     challengeSubmissionHash: text("challenge_submission_hash"),
+    rulesAcknowledgedAt: timestamp("rules_acknowledged_at", { withTimezone: true }),
     responseTimeMs: integer("response_time_ms"),
     cooldownUntil: timestamp("cooldown_until", { withTimezone: true }),
     failureReason: text("failure_reason"),

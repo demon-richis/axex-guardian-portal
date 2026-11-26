@@ -84,6 +84,7 @@ export const Route = createFileRoute("/api/callback")({
             { checkIpCached },
             { checkIp, snowflakeToDate },
             { analyzePortalUser },
+            { riskSignalsFromIntelligence },
             { submitVerificationChallenge },
             { policyForToken },
           ] = await Promise.all([
@@ -91,10 +92,11 @@ export const Route = createFileRoute("/api/callback")({
             import("@/lib/ip-check-cache.server"),
             import("@/lib/db/client.server"),
             import("@/lib/intelligence.server"),
+            import("@/lib/intelligence-signals.server"),
             import("@/lib/verification-submit.server"),
             import("@/lib/verification-policy.server"),
           ]);
-          const { token, challengeId, turnstileToken } = parsed.data;
+          const { token, challengeId, turnstileToken, orbitToken } = parsed.data;
           const row = (
             await db.select().from(verifyTokens).where(eq(verifyTokens.token, token)).limit(1)
           )[0];
@@ -148,6 +150,7 @@ export const Route = createFileRoute("/api/callback")({
             token,
             challengeId,
             turnstileToken,
+            orbitToken,
             discordId: parsed.data.discordId,
             discordTag: parsed.data.discordTag,
             discordAvatar: parsed.data.discordAvatar,
@@ -165,8 +168,12 @@ export const Route = createFileRoute("/api/callback")({
             networkFlagged,
             networkFlagReason,
             intelligenceRecommendation: intelligence?.recommendation,
+            riskSignals: riskSignalsFromIntelligence(intelligence),
           });
-          if (result.success && result.status === "bot_update_pending") {
+          if (
+            result.success &&
+            (result.status === "bot_update_pending" || result.status === "pending_review")
+          ) {
             try {
               const { processBotCallbackOutbox } = await import("@/lib/bot-callback-outbox.server");
               const delivery = processBotCallbackOutbox(1, result.referenceId ?? undefined).catch(

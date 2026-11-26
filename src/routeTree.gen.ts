@@ -26,6 +26,8 @@ import { Route as ApiBotReleaseRouteImport } from './routes/api/bot.release'
 import { Route as ApiBotTokenRouteImport } from './routes/api/bot.token'
 import { Route as ApiGuildGuildIdRouteImport } from './routes/api/guild.$guildId'
 import { Route as ApiGuildRegisterRouteImport } from './routes/api/guild.register'
+import { Route as ApiOrbitSessionRouteImport } from './routes/api/orbit.session'
+import { Route as ApiRulesAckRouteImport } from './routes/api/rules.ack'
 import { Route as ApiSuspiciousGuildIdRouteImport } from './routes/api/suspicious.$guildId'
 import { Route as ApiVerifyTokenRouteImport } from './routes/api/verify.$token'
 import { Route as ApiVerifyPendingRouteImport } from './routes/api/verify.pending'
@@ -115,6 +117,16 @@ const ApiGuildRegisterRoute = ApiGuildRegisterRouteImport.update({
   path: '/api/guild/register',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ApiOrbitSessionRoute = ApiOrbitSessionRouteImport.update({
+  id: '/api/orbit/session',
+  path: '/api/orbit/session',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ApiRulesAckRoute = ApiRulesAckRouteImport.update({
+  id: '/api/rules/ack',
+  path: '/api/rules/ack',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSuspiciousGuildIdRoute = ApiSuspiciousGuildIdRouteImport.update({
   id: '/api/suspicious/$guildId',
   path: '/api/suspicious/$guildId',
@@ -149,6 +161,8 @@ export interface FileRoutesByFullPath {
   '/api/bot/token': typeof ApiBotTokenRoute
   '/api/guild/$guildId': typeof ApiGuildGuildIdRoute
   '/api/guild/register': typeof ApiGuildRegisterRoute
+  '/api/orbit/session': typeof ApiOrbitSessionRoute
+  '/api/rules/ack': typeof ApiRulesAckRoute
   '/api/suspicious/$guildId': typeof ApiSuspiciousGuildIdRoute
   '/api/verify/$token': typeof ApiVerifyTokenRoute
   '/api/verify/pending': typeof ApiVerifyPendingRoute
@@ -171,6 +185,8 @@ export interface FileRoutesByTo {
   '/api/bot/token': typeof ApiBotTokenRoute
   '/api/guild/$guildId': typeof ApiGuildGuildIdRoute
   '/api/guild/register': typeof ApiGuildRegisterRoute
+  '/api/orbit/session': typeof ApiOrbitSessionRoute
+  '/api/rules/ack': typeof ApiRulesAckRoute
   '/api/suspicious/$guildId': typeof ApiSuspiciousGuildIdRoute
   '/api/verify/$token': typeof ApiVerifyTokenRoute
   '/api/verify/pending': typeof ApiVerifyPendingRoute
@@ -194,6 +210,8 @@ export interface FileRoutesById {
   '/api/bot/token': typeof ApiBotTokenRoute
   '/api/guild/$guildId': typeof ApiGuildGuildIdRoute
   '/api/guild/register': typeof ApiGuildRegisterRoute
+  '/api/orbit/session': typeof ApiOrbitSessionRoute
+  '/api/rules/ack': typeof ApiRulesAckRoute
   '/api/suspicious/$guildId': typeof ApiSuspiciousGuildIdRoute
   '/api/verify/$token': typeof ApiVerifyTokenRoute
   '/api/verify/pending': typeof ApiVerifyPendingRoute
@@ -218,6 +236,8 @@ export interface FileRouteTypes {
     | '/api/bot/token'
     | '/api/guild/$guildId'
     | '/api/guild/register'
+    | '/api/orbit/session'
+    | '/api/rules/ack'
     | '/api/suspicious/$guildId'
     | '/api/verify/$token'
     | '/api/verify/pending'
@@ -240,6 +260,8 @@ export interface FileRouteTypes {
     | '/api/bot/token'
     | '/api/guild/$guildId'
     | '/api/guild/register'
+    | '/api/orbit/session'
+    | '/api/rules/ack'
     | '/api/suspicious/$guildId'
     | '/api/verify/$token'
     | '/api/verify/pending'
@@ -262,6 +284,8 @@ export interface FileRouteTypes {
     | '/api/bot/token'
     | '/api/guild/$guildId'
     | '/api/guild/register'
+    | '/api/orbit/session'
+    | '/api/rules/ack'
     | '/api/suspicious/$guildId'
     | '/api/verify/$token'
     | '/api/verify/pending'
@@ -285,6 +309,8 @@ export interface RootRouteChildren {
   ApiBotTokenRoute: typeof ApiBotTokenRoute
   ApiGuildGuildIdRoute: typeof ApiGuildGuildIdRoute
   ApiGuildRegisterRoute: typeof ApiGuildRegisterRoute
+  ApiOrbitSessionRoute: typeof ApiOrbitSessionRoute
+  ApiRulesAckRoute: typeof ApiRulesAckRoute
   ApiSuspiciousGuildIdRoute: typeof ApiSuspiciousGuildIdRoute
   ApiVerifyTokenRoute: typeof ApiVerifyTokenRoute
   ApiVerifyPendingRoute: typeof ApiVerifyPendingRoute
@@ -411,6 +437,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiGuildRegisterRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/api/orbit/session': {
+      id: '/api/orbit/session'
+      path: '/api/orbit/session'
+      fullPath: '/api/orbit/session'
+      preLoaderRoute: typeof ApiOrbitSessionRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/api/rules/ack': {
+      id: '/api/rules/ack'
+      path: '/api/rules/ack'
+      fullPath: '/api/rules/ack'
+      preLoaderRoute: typeof ApiRulesAckRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/suspicious/$guildId': {
       id: '/api/suspicious/$guildId'
       path: '/api/suspicious/$guildId'
@@ -453,6 +493,8 @@ const rootRouteChildren: RootRouteChildren = {
   ApiBotTokenRoute: ApiBotTokenRoute,
   ApiGuildGuildIdRoute: ApiGuildGuildIdRoute,
   ApiGuildRegisterRoute: ApiGuildRegisterRoute,
+  ApiOrbitSessionRoute: ApiOrbitSessionRoute,
+  ApiRulesAckRoute: ApiRulesAckRoute,
   ApiSuspiciousGuildIdRoute: ApiSuspiciousGuildIdRoute,
   ApiVerifyTokenRoute: ApiVerifyTokenRoute,
   ApiVerifyPendingRoute: ApiVerifyPendingRoute,

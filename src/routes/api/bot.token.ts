@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, eq, gt, inArray, lt } from "drizzle-orm";
 import { z } from "zod";
 import { CASE_CODE_PATTERN, isCaseCodeCollision } from "../../lib/case-code.server.ts";
 import { isReferenceIdCollision } from "../../lib/reference-id.server.ts";
@@ -8,7 +8,7 @@ import type { getDb } from "../../lib/db/client.server.ts";
 import {
   normalizeVerificationPolicy,
   parseOptionalVerificationPolicy,
-  policyForToken,
+  policyForVerificationLevel,
 } from "../../lib/verification-policy.server.ts";
 import { isVerificationPolicyEnabled } from "../../lib/verification-policy-schema.server.ts";
 import {
@@ -34,7 +34,7 @@ const Body = z.object({
   guildMemberCount: z.number().int().nonnegative().optional(),
   expiresAt: z.string().datetime({ offset: true }),
   caseCode: z.string().regex(CASE_CODE_PATTERN).optional(),
-  policy: z.record(z.unknown()).optional(),
+  policy: z.record(z.string(), z.unknown()).optional(),
   level: VerificationLevelSchema.optional(),
   autoCandidate: z.boolean().optional(),
   profileSignals: ProfileSignalsSchema.optional(),
@@ -116,7 +116,7 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
         )
         .limit(1)
     )[0];
-    const effectivePolicy = policyForToken(policy ?? state?.policy);
+    const effectivePolicy = policyForVerificationLevel(policy ?? state?.policy, level);
     if (state?.lockedAt || (state?.attempts ?? 0) >= effectivePolicy.maxAttempts) {
       return Response.json(
         { error: "Verification is locked", locked: true, attempts: state?.attempts ?? 0 },
@@ -139,6 +139,7 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
         token: dependencies.verifyTokens.token,
         referenceId: dependencies.verifyTokens.referenceId,
         caseCode: dependencies.verifyTokens.caseCode,
+        expiresAt: dependencies.verifyTokens.expiresAt,
       })
       .from(dependencies.verifyTokens)
       .where(
@@ -151,12 +152,31 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
       )
       .limit(1);
     if (active[0]) {
+      const requestedExpiry = new Date(expiresAt);
+      let activeExpiry = active[0].expiresAt;
+      if (activeExpiry.getTime() < requestedExpiry.getTime()) {
+        const updated = await db
+          .update(dependencies.verifyTokens)
+          .set({ expiresAt: requestedExpiry })
+          .where(
+            and(
+              eq(dependencies.verifyTokens.token, active[0].token),
+              eq(dependencies.verifyTokens.userId, userId),
+              eq(dependencies.verifyTokens.guildId, guildId),
+              lt(dependencies.verifyTokens.expiresAt, requestedExpiry),
+              inArray(dependencies.verifyTokens.status, ["pending", "bot_update_pending"]),
+            ),
+          )
+          .returning({ expiresAt: dependencies.verifyTokens.expiresAt });
+        activeExpiry = updated[0]?.expiresAt ?? activeExpiry;
+      }
       return Response.json({
         success: true,
         reused: true,
         token: active[0].token,
         referenceId: active[0].referenceId,
         caseCode: active[0].caseCode,
+        expiresAt: activeExpiry.toISOString(),
       });
     }
 
@@ -248,6 +268,7 @@ export async function handleBotTokenRequest(request: Request, dependencies: BotT
             token,
             referenceId: existingToken.referenceId,
             caseCode: existingToken.caseCode,
+            expiresAt: existingToken.expiresAt.toISOString(),
           });
         }
         return Response.json(

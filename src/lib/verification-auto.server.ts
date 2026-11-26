@@ -27,6 +27,7 @@ export type OAuthProfileSignals = {
   avatarDecoration?: boolean;
   bio?: string | null;
   intelligenceRecommendation?: string | null;
+  riskSignals?: RiskSignals;
 };
 
 type AutoVerificationResult = {
@@ -96,6 +97,7 @@ export async function attemptAutoVerification(
 
   const effectiveRiskSignals = {
     ...riskSignals,
+    ...(oauthSignals.riskSignals ?? {}),
     defaultAvatar: riskSignals.defaultAvatar || !row.discordAvatar,
   };
   const observedLevel = classifyVerificationLevel({

@@ -21,6 +21,8 @@ export const Route = createFileRoute("/api/auth/callback")({
         const { bindOAuthIdentity } = await import("../../lib/discord-identity.server.ts");
         const { verifyTokens } = await import("../../lib/db/schema.ts");
         const { analyzePortalUser } = await import("../../lib/intelligence.server.ts");
+        const { riskSignalsFromIntelligence } =
+          await import("../../lib/intelligence-signals.server.ts");
         const { attemptAutoVerification } = await import("../../lib/verification-auto.server.ts");
         const { consumeOAuthState, createSessionCookie } =
           await import("../../lib/session.server.ts");
@@ -183,6 +185,7 @@ export const Route = createFileRoute("/api/auth/callback")({
                 ...(intelligence?.recommendation !== undefined
                   ? { intelligenceRecommendation: intelligence.recommendation }
                   : {}),
+                riskSignals: riskSignalsFromIntelligence(intelligence),
               },
               (ip) => checkIp(ip),
             );

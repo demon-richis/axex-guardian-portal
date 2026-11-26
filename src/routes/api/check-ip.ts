@@ -15,6 +15,8 @@ export const Route = createFileRoute("/api/check-ip")({
             { unauthorizedSessionResponse, verifySession },
             { policyForToken },
             { RiskSignalsSchema, classifyVerificationLevel, maxVerificationLevel },
+            { analyzePortalUser },
+            { riskSignalsFromIntelligence },
           ] = await Promise.all([
             import("@/lib/db/client.server"),
             import("@/lib/db/schema"),
@@ -23,6 +25,8 @@ export const Route = createFileRoute("/api/check-ip")({
             import("@/lib/session.server"),
             import("@/lib/verification-policy.server"),
             import("@/lib/verification-level.server"),
+            import("@/lib/intelligence.server"),
+            import("@/lib/intelligence-signals.server"),
           ]);
           const url = new URL(request.url);
           const token = url.searchParams.get("token") ?? "";
@@ -108,7 +112,17 @@ export const Route = createFileRoute("/api/check-ip")({
           let level = tokenRow.level;
           if (result.status !== "unavailable") {
             const parsedRiskSignals = RiskSignalsSchema.safeParse(tokenRow.riskSignals ?? {});
-            const riskSignals = parsedRiskSignals.success ? parsedRiskSignals.data : {};
+            const intelligence = await analyzePortalUser(tokenRow.discordId, tokenRow.guildId, {
+              username: tokenRow.discordUsername,
+              avatar: tokenRow.discordAvatar,
+              createdTimestamp: snowflakeToDate(tokenRow.discordId).getTime(),
+              ip,
+            });
+            const riskSignals = {
+              ...(parsedRiskSignals.success ? parsedRiskSignals.data : {}),
+              ...riskSignalsFromIntelligence(intelligence),
+              ...(result.flagged === true ? { knownBadIp: true, blocklistHit: true } : {}),
+            };
             const accountAgeDays = Math.max(
               0,
               Math.floor((Date.now() - snowflakeToDate(tokenRow.discordId).getTime()) / 86_400_000),
@@ -122,11 +136,14 @@ export const Route = createFileRoute("/api/check-ip")({
                 defaultAvatar: riskSignals.defaultAvatar || !tokenRow.discordAvatar,
               },
               vpnDetected: result.isVPN,
+              ...(intelligence?.recommendation !== undefined
+                ? { intelligenceRecommendation: intelligence.recommendation }
+                : {}),
             });
             level = maxVerificationLevel(tokenRow.level, calculatedLevel);
             await db
               .update(verifyTokens)
-              .set({ level })
+              .set({ level, riskSignals })
               .where(
                 and(
                   eq(verifyTokens.token, token),
@@ -134,6 +151,36 @@ export const Route = createFileRoute("/api/check-ip")({
                   inArray(verifyTokens.status, ["pending", "failed"]),
                 ),
               );
+            if (level === "critical") {
+              const { queueCriticalVerification } =
+                await import("@/lib/verification-critical.server");
+              const queued = await queueCriticalVerification(
+                db,
+                token,
+                riskSignals.confirmedAltOfBanned
+                  ? "Confirmed banned-user alt"
+                  : riskSignals.knownBadIp
+                    ? "Known-bad IP"
+                    : riskSignals.blocklistHit
+                      ? "Blocklist hit"
+                      : "Critical risk signal",
+              );
+              if (queued) {
+                const { processBotCallbackOutbox } =
+                  await import("@/lib/bot-callback-outbox.server");
+                const delivery = processBotCallbackOutbox(1, tokenRow.referenceId ?? undefined);
+                if (process.env["VERCEL"] === "1") {
+                  const { waitUntil } = await import("@vercel/functions");
+                  waitUntil(delivery);
+                } else {
+                  await delivery;
+                }
+              }
+              return Response.json(
+                { status: "quarantined", isVPN: result.isVPN, type: result.type, level },
+                { headers: { "cache-control": "no-store" } },
+              );
+            }
           }
           return Response.json(
             {

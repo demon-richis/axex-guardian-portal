@@ -18,7 +18,7 @@ export const Route = createFileRoute("/api/verify/$token")({
             import("@/lib/session.server"),
           ]);
           const { publicVerificationSummary } = await import("@/lib/verification-response.server");
-          const { policyForToken } = await import("@/lib/verification-policy.server");
+          const { policyForVerificationLevel } = await import("@/lib/verification-policy.server");
           const db = getDb();
           const ip = clientIp(request) || "unknown";
           const ipLimit = await consumeConfiguredRateLimit(
@@ -64,7 +64,7 @@ export const Route = createFileRoute("/api/verify/$token")({
               .limit(1)
           )[0];
           const attempts = state?.attempts ?? row.attempts;
-          const policy = policyForToken(row.policy ?? state?.policy);
+          const policy = policyForVerificationLevel(row.policy ?? state?.policy, row.level);
           const sessionMatches = Boolean(
             row.discordId && verifySession(request, token, row.discordId),
           );
@@ -76,6 +76,14 @@ export const Route = createFileRoute("/api/verify/$token")({
               maxAttempts: policy.maxAttempts,
               ...common,
             });
+          if (row.status === "pending_review") {
+            return Response.json({
+              valid: true,
+              pendingPassed: true,
+              maxAttempts: policy.maxAttempts,
+              ...common,
+            });
+          }
           if (row.status === "bot_update_pending") {
             return Response.json({
               valid: true,

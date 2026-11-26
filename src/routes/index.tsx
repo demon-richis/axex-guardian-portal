@@ -58,7 +58,14 @@ function FeatureIcon({ type }: { type: string }) {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
-        <path d="m8.5 12 2.2 2.2 4.8-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+        <path
+          d="m8.5 12 2.2 2.2 4.8-5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
       </svg>
     );
   }
@@ -66,15 +73,33 @@ function FeatureIcon({ type }: { type: string }) {
   if (type === "signal") {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true">
-        <path d="M5 18v-3M9.7 18v-6M14.3 18V8M19 18V5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        <path
+          d="M5 18v-3M9.7 18v-6M14.3 18V8M19 18V5"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+        />
       </svg>
     );
   }
 
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M12 3.5 19 6v5.2c0 4.25-2.6 7.45-7 9.3-4.4-1.85-7-5.05-7-9.3V6l7-2.5Z" fill="none" stroke="currentColor" strokeWidth="1.8" />
-      <path d="m8.7 12 2.15 2.15L15.5 9.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+      <path
+        d="M12 3.5 19 6v5.2c0 4.25-2.6 7.45-7 9.3-4.4-1.85-7-5.05-7-9.3V6l7-2.5Z"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+      />
+      <path
+        d="m8.7 12 2.15 2.15L15.5 9.5"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.8"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   );
 }
@@ -103,11 +128,24 @@ function MiniPanel() {
         <div className="panel-content">
           <div className="panel-line panel-line-lg" />
           <div className="panel-cards">
-            <div><small>VERIFICATION</small><b>ACTIVE</b></div>
-            <div><small>RAID MODE</small><b className="green">CLEAR</b></div>
+            <div>
+              <small>VERIFICATION</small>
+              <b>ACTIVE</b>
+            </div>
+            <div>
+              <small>RAID MODE</small>
+              <b className="green">CLEAR</b>
+            </div>
           </div>
           <div className="panel-graph">
-            <i /><i /><i /><i /><i /><i /><i /><i />
+            <i />
+            <i />
+            <i />
+            <i />
+            <i />
+            <i />
+            <i />
+            <i />
           </div>
         </div>
       </div>
@@ -122,7 +160,8 @@ export const Route = createFileRoute("/")({
       { title: "Axex — Security. Built for Discord." },
       {
         name: "description",
-        content: "Axex protects Discord communities with verification, raid protection, account intelligence, quarantine, and security controls.",
+        content:
+          "Axex protects Discord communities with verification, raid protection, account intelligence, quarantine, and security controls.",
       },
       { property: "og:title", content: "Axex — Security. Built for Discord." },
       {
@@ -147,14 +186,19 @@ function AxexLanding() {
           </a>
 
           <div className="axex-nav-links">
-            <a className="active" href="#top">Home</a>
+            <a className="active" href="#top">
+              Home
+            </a>
             <a href="#features">Features</a>
             <a href="#guardian">Guardian Portal</a>
             <a href="#intelligence">Account Intelligence</a>
             <a href="#about">About</a>
           </div>
 
-          <a className="axex-nav-cta" href="https://discord.com/oauth2/authorize?client_id=1453399273550123050&scope=bot%20applications.commands&permissions=8">
+          <a
+            className="axex-nav-cta"
+            href="https://discord.com/oauth2/authorize?client_id=1453399273550123050&scope=bot%20applications.commands&permissions=8"
+          >
             <DiscordIcon />
             <span>Add to Discord</span>
             <span aria-hidden="true">→</span>
@@ -201,7 +245,10 @@ function AxexLanding() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6, delay: 0.24 }}
           >
-            <a className="primary-cta" href="https://discord.com/oauth2/authorize?client_id=1453399273550123050&scope=bot%20applications.commands&permissions=8">
+            <a
+              className="primary-cta"
+              href="https://discord.com/oauth2/authorize?client_id=1453399273550123050&scope=bot%20applications.commands&permissions=8"
+            >
               <DiscordIcon />
               Add Axex to Discord
               <span>→</span>
@@ -239,8 +286,12 @@ function AxexLanding() {
         <motion.a
           href="#features"
           className="scroll-cue"
-          animate={reduceMotion ? undefined : { y: [0, 7, 0] }}
-          transition={reduceMotion ? undefined : { duration: 1.7, repeat: Infinity }}
+          {...(reduceMotion
+            ? {}
+            : {
+                animate: { y: [0, 7, 0] },
+                transition: { duration: 1.7, repeat: Infinity },
+              })}
           aria-label="Scroll to features"
         >
           ↓
@@ -250,7 +301,11 @@ function AxexLanding() {
       <section id="features" className="axex-section">
         <div>
           <span className="section-kicker">POWERFUL FEATURES</span>
-          <h2>Everything you need<br />for a <em>safer</em> server.</h2>
+          <h2>
+            Everything you need
+            <br />
+            for a <em>safer</em> server.
+          </h2>
         </div>
         <p>From join surges to secure verification, Axex gives you control without the noise.</p>
       </section>
@@ -258,24 +313,42 @@ function AxexLanding() {
       <section id="guardian" className="axex-section axex-section-alt">
         <div>
           <span className="section-kicker">UNIFIED ECOSYSTEM</span>
-          <h2>Bot + Guardian Portal.<br />One security layer.</h2>
+          <h2>
+            Bot + Guardian Portal.
+            <br />
+            One security layer.
+          </h2>
         </div>
-        <p>Connect Discord-side protection with centralized verification and security management.</p>
+        <p>
+          Connect Discord-side protection with centralized verification and security management.
+        </p>
       </section>
 
       <section id="intelligence" className="axex-section">
         <div>
           <span className="section-kicker">ACCOUNT INTELLIGENCE</span>
-          <h2>Understand the account<br />before you <em>trust</em> it.</h2>
+          <h2>
+            Understand the account
+            <br />
+            before you <em>trust</em> it.
+          </h2>
         </div>
-        <p>Use the intelligence signals already exposed by Axex to inform verification and risk handling.</p>
+        <p>
+          Use the intelligence signals already exposed by Axex to inform verification and risk
+          handling.
+        </p>
       </section>
 
       <section id="about" className="axex-final">
         <span className="section-kicker">AXEX</span>
-        <h2>Protect what you <em>built.</em></h2>
+        <h2>
+          Protect what you <em>built.</em>
+        </h2>
         <p>Security for the communities you run.</p>
-        <a className="primary-cta" href="https://discord.com/oauth2/authorize?client_id=1453399273550123050&scope=bot%20applications.commands&permissions=8">
+        <a
+          className="primary-cta"
+          href="https://discord.com/oauth2/authorize?client_id=1453399273550123050&scope=bot%20applications.commands&permissions=8"
+        >
           <DiscordIcon />
           Add Axex to Discord
           <span>→</span>

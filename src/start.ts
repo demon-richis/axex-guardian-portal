@@ -56,6 +56,17 @@ if (import.meta.env.SSR) {
     if (!process.env[name] && !legacyApiKeyConfigured)
       console.warn(`[portal] ${name} is not configured; related functionality may be unavailable`);
   }
+
+  if (process.env["ORBIT_ENABLED"]?.trim().toLowerCase() === "true") {
+    const missingOrbitConfig = ["ORBIT_PUBLIC_URL", "ORBIT_API_URL", "ORBIT_SIGNING_SECRET"].filter(
+      (name) => !process.env[name]?.trim(),
+    );
+    if (missingOrbitConfig.length) {
+      console.error(
+        "[portal] SECURITY WARNING: AxexOrbit is enabled but required server configuration is incomplete; High verification will fail closed.",
+      );
+    }
+  }
 }
 
 const errorMiddleware = createMiddleware().server(async ({ next }) => {

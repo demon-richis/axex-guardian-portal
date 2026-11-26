@@ -69,9 +69,43 @@ export const Route = createFileRoute("/api/challenge")({
             await import("@/lib/verification-challenge.server");
           const result = await issueVerificationChallenge(db, parsed.data.token);
           if (result.success) {
+            const level = result.level;
+            let orbitBaseUrl: string | undefined;
+            if (level === "high") {
+              try {
+                const orbit = await import("@/lib/orbit.server");
+                if (orbit.orbitEnabled()) orbitBaseUrl = orbit.orbitPublicOrigin();
+              } catch (error) {
+                console.error(
+                  "[challenge] Orbit is unavailable:",
+                  error instanceof Error ? error.message : "unknown error",
+                );
+                return Response.json(
+                  { success: false, error: "challenge_unavailable" },
+                  { status: 503 },
+                );
+              }
+            }
+            const providerIsOrbit = level === "high" && Boolean(orbitBaseUrl);
+            const siteKey =
+              level === "medium"
+                ? process.env["TURNSTILE_INTERACTIVE_SITE_KEY"]
+                : process.env["TURNSTILE_SITE_KEY"];
+            if (!providerIsOrbit && !siteKey) {
+              return Response.json(
+                { success: false, error: "challenge_unavailable" },
+                { status: 503 },
+              );
+            }
             return Response.json({
               ...result,
-              siteKey: process.env["TURNSTILE_SITE_KEY"] ?? "",
+              ...(!providerIsOrbit ? { siteKey: siteKey ?? "" } : {}),
+              challengeMode: orbitBaseUrl
+                ? "orbit"
+                : level === "medium"
+                  ? "interactive"
+                  : "managed",
+              ...(orbitBaseUrl ? { orbitBaseUrl } : {}),
             });
           }
           const status =
@@ -81,7 +115,9 @@ export const Route = createFileRoute("/api/challenge")({
               ? 400
               : result.error === "locked" || result.error === "cooldown"
                 ? 429
-                : 403;
+                : result.error === "rules_ack_required"
+                  ? 403
+                  : 403;
           return Response.json(result, { status });
         } catch (error) {
           console.error(

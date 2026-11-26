@@ -136,6 +136,7 @@ test("production startup validation requires a sufficiently strong session secre
         NODE_ENV: "production",
         SESSION_SECRET: "a".repeat(32),
         TURNSTILE_SITE_KEY: "site-key",
+        TURNSTILE_INTERACTIVE_SITE_KEY: "interactive-site-key",
         TURNSTILE_SECRET_KEY: "secret-key",
         DATABASE_URL: "postgresql://portal.test/db",
         BOT_TO_PORTAL_KEY: "b".repeat(32),

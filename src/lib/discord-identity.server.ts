@@ -25,13 +25,15 @@ type IdentityBindingResult =
     };
 
 function bindingFailure(
-  row: {
-    userId: string;
-    discordId: string | null;
-    expiresAt: Date;
-    used: boolean;
-    status: string;
-  } | undefined,
+  row:
+    | {
+        userId: string;
+        discordId: string | null;
+        expiresAt: Date;
+        used: boolean | null;
+        status: string;
+      }
+    | undefined,
   identityId: string,
   now: Date,
 ): IdentityBindingResult | null {

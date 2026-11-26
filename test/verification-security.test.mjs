@@ -15,6 +15,8 @@ import { bindOAuthIdentity } from "../src/lib/discord-identity.server.ts";
 import { isSameOrigin } from "../src/lib/rate-limit.server.ts";
 import { isReferenceIdCollision } from "../src/lib/reference-id.server.ts";
 import { releaseVerificationState } from "../src/lib/verification-state.server.ts";
+import { acknowledgeVerificationRules } from "../src/lib/verification-rules.server.ts";
+import { queueCriticalVerification } from "../src/lib/verification-critical.server.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const migrationDir = join(root, "drizzle");
@@ -31,6 +33,7 @@ const migrationFiles = [
   "0009_verification_policy.sql",
   "0010_audit_logs_ip_window.sql",
   "0011_verification_levels.sql",
+  "0012_verification_rules_acknowledgement.sql",
 ];
 
 async function applyMigration(client, name) {
@@ -57,7 +60,9 @@ async function seedToken(
     now = new Date(),
     expiresInMs = 60 * 60 * 1000,
     discordId = snowflakeFrom(new Date(now.getTime() - 30 * 86_400_000)),
+    discordAvatar = null,
     policy,
+    level = "low",
   } = {},
 ) {
   const targetUserId = userId ?? discordId;
@@ -69,9 +74,11 @@ async function seedToken(
     expiresAt: new Date(now.getTime() + expiresInMs),
     used: false,
     status: "pending",
+    level,
     referenceId,
     discordId,
     discordUsername: "staging-user",
+    discordAvatar,
     attempts: 0,
     ...(policy ? { policy } : {}),
   });
@@ -120,6 +127,7 @@ test("durable-state migration backfills only from each user's latest token", asy
     await applyMigration(client, "0009_verification_policy.sql");
     await applyMigration(client, "0010_audit_logs_ip_window.sql");
     await applyMigration(client, "0011_verification_levels.sql");
+    await applyMigration(client, "0012_verification_rules_acknowledgement.sql");
     const db = drizzle(client, { schema });
     const base = new Date(Date.now() - 2_000);
     const future = new Date(Date.now() + 86_400_000);
@@ -190,6 +198,7 @@ test("migration hardens legacy rows with three attempts into durable locks", asy
     await applyMigration(client, "0009_verification_policy.sql");
     await applyMigration(client, "0010_audit_logs_ip_window.sql");
     await applyMigration(client, "0011_verification_levels.sql");
+    await applyMigration(client, "0012_verification_rules_acknowledgement.sql");
     const seed = await seedToken(db, {
       token: "legacy-three-failures",
     });
@@ -230,6 +239,62 @@ test("challenge is random, server-bound, and duplicate issuance returns the same
     assert.equal(row.challengeAnswerHash, null);
     assert.ok(row.challengeIssuedAt);
     assert.ok(row.challengeExpiresAt.getTime() <= row.expiresAt.getTime());
+  } finally {
+    await client.close();
+  }
+});
+
+test("medium verification requires a durable, identity-bound rules acknowledgement", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const seed = await seedToken(db, { level: "medium" });
+    const now = new Date();
+    assert.deepEqual(await issueVerificationChallenge(db, seed.token, now), {
+      success: false,
+      error: "rules_ack_required",
+    });
+
+    assert.deepEqual(await acknowledgeVerificationRules(db, seed.token, "different-user", now), {
+      success: false,
+      error: "identity_mismatch",
+    });
+    const acknowledged = await acknowledgeVerificationRules(db, seed.token, seed.discordId, now);
+    assert.equal(acknowledged.success, true);
+    if (!acknowledged.success) return;
+    assert.equal(acknowledged.acknowledgedAt.toISOString(), now.toISOString());
+    const repeated = await acknowledgeVerificationRules(
+      db,
+      seed.token,
+      seed.discordId,
+      new Date(now.getTime() + 1_000),
+    );
+    assert.equal(repeated.success, true);
+    if (repeated.success) assert.equal(repeated.acknowledgedAt.toISOString(), now.toISOString());
+
+    const issued = await issueVerificationChallenge(db, seed.token, now);
+    assert.equal(issued.success, true);
+  } finally {
+    await client.close();
+  }
+});
+
+test("medium submission is rejected before challenge verification until rules are acknowledged", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const seed = await seedToken(db, { level: "medium" });
+    const input = submitInput(seed, { challengeId: "a".repeat(48) }, "turnstile-placeholder");
+    let turnstileCalls = 0;
+    input.turnstileFetch = async () => {
+      turnstileCalls += 1;
+      throw new Error("Turnstile must not run before acknowledgement");
+    };
+    const result = await submitVerificationChallenge(db, input);
+    assert.deepEqual(result, {
+      success: false,
+      error: "rules_ack_required",
+      httpStatus: 403,
+    });
+    assert.equal(turnstileCalls, 0);
   } finally {
     await client.close();
   }
@@ -447,7 +512,8 @@ test("invalid Turnstile attempts escalate across challenges and the third locks 
     const seed = await seedToken(db, {
       now,
       expiresInMs: 8 * 60 * 60 * 1000,
-      discordId: snowflakeFrom(new Date(now.getTime() - 86_400_000)),
+      discordId: snowflakeFrom(new Date(now.getTime() - 30 * 86_400_000)),
+      discordAvatar: "test-avatar",
     });
     let result;
     let lastChallenge;
@@ -515,6 +581,7 @@ test("stored policy controls max attempts and per-attempt cooldowns", async () =
     let now = new Date();
     const seed = await seedToken(db, {
       now,
+      discordAvatar: "test-avatar",
       policy: {
         maxAttempts: 2,
         cooldownsSeconds: [7, 11],
@@ -676,6 +743,7 @@ test("portal escalates a blocklist hit to a terminal critical callback", async (
       db,
       submitInput(seed, challenge, correctAnswer),
     );
+    console.log("HIGH_RESULT", result);
     const [row] = await db
       .select()
       .from(schema.verifyTokens)
@@ -688,6 +756,28 @@ test("portal escalates a blocklist hit to a terminal critical callback", async (
     assert.equal(outbox.payload.level, "critical");
     assert.equal(outbox.payload.passed, false);
     assert.equal(outbox.payload.flagReason, "Blocklist hit");
+  } finally {
+    await client.close();
+  }
+});
+
+test("critical risk quarantines immediately through one durable bot callback", async () => {
+  const { client, db } = await freshDb();
+  try {
+    const seed = await seedToken(db);
+    assert.equal(await queueCriticalVerification(db, seed.token, "Blocklist hit"), true);
+    assert.equal(await queueCriticalVerification(db, seed.token, "Blocklist hit"), false);
+    const row = (
+      await db.select().from(schema.verifyTokens).where(eq(schema.verifyTokens.token, seed.token))
+    )[0];
+    const outbox = await db.select().from(schema.botCallbackOutbox);
+    assert.equal(row.status, "bot_update_pending");
+    assert.equal(row.used, true);
+    assert.equal(row.level, "critical");
+    assert.equal(outbox.length, 1);
+    assert.equal(outbox[0].payload.level, "critical");
+    assert.equal(outbox[0].payload.passed, false);
+    assert.equal(outbox[0].payload.locked, true);
   } finally {
     await client.close();
   }

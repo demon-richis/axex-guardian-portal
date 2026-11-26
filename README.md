@@ -97,6 +97,10 @@ The container listens on `0.0.0.0:$PORT` and can run on any Docker-compatible ho
 - `INTELLIGENCE_URL` — server-only account intelligence API base URL.
 - `INTELLIGENCE_API_KEY` — server-only account intelligence API key.
 - `VERIFICATION_POLICY_ENABLED=false` — set to `true` only after migration `0009` and later are applied; enables persisted bot-supplied policy, including `autoVerifyEnabled`.
+- `ORBIT_ENABLED=false` — enables AxexOrbit for High verification.
+- `ORBIT_PUBLIC_URL` — public browser-facing Orbit origin.
+- `ORBIT_API_URL` — server-only Orbit API origin.
+- `ORBIT_SIGNING_SECRET` — server-only Orbit site secret; never use a `VITE_` prefix.
 
 After changing the deployment domain, update the Discord OAuth redirect URL in the Discord application as well as `DISCORD_REDIRECT_URI`.
 
@@ -117,3 +121,16 @@ This portal currently retains its existing Turnstile flow for low/medium levels.
 Portal migration order is `0000` through `0011`; apply each SQL file once in numeric order before enabling policy persistence. Migration `0011_verification_levels.sql` adds the persisted initial/current level and bot-trusted candidate/profile/risk signal fields. Discord bot review buttons, review timeout sweeping, Orbit integration, and the bot's profile analyzer require changes in the separate bot repository and are not implemented by this portal repository.
 
 Apply migrations and validate the production environment in staging before rollout. Keep directional API keys synchronized with the bot and preserve durable verification locks during rollback.
+
+## Orbit (High level)
+
+Set `ORBIT_ENABLED=true`, `ORBIT_PUBLIC_URL`, `ORBIT_API_URL`, and `ORBIT_SIGNING_SECRET` in the Vercel project after deploying AxexOrbit. Use HTTPS origins in production and keep `ORBIT_SIGNING_SECRET` server-only.
+
+Deploy AxexOrbit and configure its `ORBIT_SIGNING_KEY` and `ORBIT_SITE_SECRET` before enabling the portal integration. The portal creates Orbit sessions only through authenticated server routes and verifies proof tokens through `siteverify`; the browser receives only the constrained widget iframe URL.
+
+- High + Orbit enabled: browser uses the Orbit widget instead of Turnstile.
+- High + Orbit disabled or missing: safely falls back to Turnstile and flags the verification case.
+- Orbit unreachable with `networkFailMode=closed`: verification remains blocked.
+- Orbit unreachable with `networkFailMode=open_flag`: verification may pass with an Orbit outage flag/reason.
+- Orbit proof failures count as normal failed attempts and follow configured cooldown/lockout policy.
+- Each solved Orbit token is replay-protected and is bound to one verification identity and guild.

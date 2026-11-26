@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as PrivacyRouteImport } from './routes/privacy'
 import { Route as SupportRouteImport } from './routes/support'
+import { Route as TermsRouteImport } from './routes/terms'
 import { Route as VerifyRouteImport } from './routes/verify'
 import { Route as ApiCallbackRouteImport } from './routes/api/callback'
 import { Route as ApiChallengeRouteImport } from './routes/api/challenge'
@@ -45,6 +46,11 @@ const PrivacyRoute = PrivacyRouteImport.update({
 const SupportRoute = SupportRouteImport.update({
   id: '/support',
   path: '/support',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TermsRoute = TermsRouteImport.update({
+  id: '/terms',
+  path: '/terms',
   getParentRoute: () => rootRouteImport,
 } as any)
 const VerifyRoute = VerifyRouteImport.update({
@@ -147,6 +153,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/privacy': typeof PrivacyRoute
   '/support': typeof SupportRoute
+  '/terms': typeof TermsRoute
   '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
   '/api/challenge': typeof ApiChallengeRoute
@@ -171,6 +178,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/privacy': typeof PrivacyRoute
   '/support': typeof SupportRoute
+  '/terms': typeof TermsRoute
   '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
   '/api/challenge': typeof ApiChallengeRoute
@@ -196,6 +204,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/privacy': typeof PrivacyRoute
   '/support': typeof SupportRoute
+  '/terms': typeof TermsRoute
   '/verify': typeof VerifyRoute
   '/api/callback': typeof ApiCallbackRoute
   '/api/challenge': typeof ApiChallengeRoute
@@ -222,6 +231,7 @@ export interface FileRouteTypes {
     | '/'
     | '/privacy'
     | '/support'
+    | '/terms'
     | '/verify'
     | '/api/callback'
     | '/api/challenge'
@@ -246,6 +256,7 @@ export interface FileRouteTypes {
     | '/'
     | '/privacy'
     | '/support'
+    | '/terms'
     | '/verify'
     | '/api/callback'
     | '/api/challenge'
@@ -270,6 +281,7 @@ export interface FileRouteTypes {
     | '/'
     | '/privacy'
     | '/support'
+    | '/terms'
     | '/verify'
     | '/api/callback'
     | '/api/challenge'
@@ -295,6 +307,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   PrivacyRoute: typeof PrivacyRoute
   SupportRoute: typeof SupportRoute
+  TermsRoute: typeof TermsRoute
   VerifyRoute: typeof VerifyRoute
   ApiCallbackRoute: typeof ApiCallbackRoute
   ApiChallengeRoute: typeof ApiChallengeRoute
@@ -337,6 +350,13 @@ declare module '@tanstack/react-router' {
       path: '/support'
       fullPath: '/support'
       preLoaderRoute: typeof SupportRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/terms': {
+      id: '/terms'
+      path: '/terms'
+      fullPath: '/terms'
+      preLoaderRoute: typeof TermsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/verify': {
@@ -479,6 +499,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   PrivacyRoute: PrivacyRoute,
   SupportRoute: SupportRoute,
+  TermsRoute: TermsRoute,
   VerifyRoute: VerifyRoute,
   ApiCallbackRoute: ApiCallbackRoute,
   ApiChallengeRoute: ApiChallengeRoute,

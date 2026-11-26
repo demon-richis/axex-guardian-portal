@@ -1220,6 +1220,17 @@ function CardShell({
     >
       <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-[var(--red)] via-[var(--green)] to-transparent" />
       {loadingContent ?? children}
+      <nav
+        aria-label="Legal"
+        className="mt-5 flex justify-center gap-3 border-t border-border/70 pt-4 text-[11px] text-muted-foreground"
+      >
+        <a href="/terms" className="underline underline-offset-2 hover:text-foreground">
+          Terms
+        </a>
+        <a href="/privacy" className="underline underline-offset-2 hover:text-foreground">
+          Privacy
+        </a>
+      </nav>
     </div>
   );
 }

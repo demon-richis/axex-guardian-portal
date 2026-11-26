@@ -2,7 +2,8 @@
   "routes": [
     { "path": "/", "title": "Axex Verification" },
     { "path": "/verify", "title": "Discord Verification" },
-    { "path": "/privacy", "title": "Privacy" },
-    { "path": "/support", "title": "Support" }
+    { "path": "/privacy", "title": "Privacy Policy" },
+    { "path": "/support", "title": "Support" },
+    { "path": "/terms", "title": "Terms of Service" }
   ]
 }

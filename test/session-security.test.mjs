@@ -186,3 +186,103 @@ test.after(() => {
   if (secret === undefined) delete process.env.SESSION_SECRET;
   else process.env.SESSION_SECRET = secret;
 });
+
+
+test("security headers allow the configured public Orbit origin in the browser", () => {
+  const response = applySecurityHeaders(
+    request("https://portal.test/verify"),
+    new Response("page", { status: 200 }),
+    "orbit-nonce",
+    {
+      NODE_ENV: "production",
+      ORBIT_PUBLIC_URL: "https://orbit.example",
+      ORBIT_API_URL: "https://orbit-internal.example",
+    },
+  );
+  const csp = response.headers.get("content-security-policy") ?? "";
+  assert.match(csp, /script-src[^;]*https:\/\/orbit\.example/);
+  assert.match(csp, /connect-src[^;]*https:\/\/orbit\.example/);
+  assert.match(csp, /frame-src https:\/\/challenges\.cloudflare\.com https:\/\/orbit\.example/);
+  assert.doesNotMatch(csp, /frame-src[^;]*orbit-internal\.example/);
+});
+
+test("production Orbit validation accepts current variables and requires them when enabled", () => {
+  const base = {
+    NODE_ENV: "production",
+    SESSION_SECRET: "s".repeat(32),
+    TURNSTILE_SITE_KEY: "site-key",
+    TURNSTILE_SECRET_KEY: "secret-key",
+    DATABASE_URL: "postgresql://portal.test/db",
+    BOT_TO_PORTAL_KEY: "b".repeat(32),
+    PORTAL_TO_BOT_KEY: "p".repeat(32),
+    BOT_WEBHOOK_URL: "https://bot.test/callback",
+    DISCORD_CLIENT_ID: "client-id",
+    DISCORD_CLIENT_SECRET: "client-secret",
+    DISCORD_REDIRECT_URI: "https://portal.test/api/auth/callback",
+    CRON_SECRET: "c".repeat(32),
+    TRUSTED_PROXY_MODE: "vercel",
+    RATE_LIMIT_BACKEND: "neon",
+    INTELLIGENCE_URL: "https://intelligence.test",
+    INTELLIGENCE_API_KEY: "intelligence-key",
+  };
+  assert.doesNotThrow(() =>
+    validateRuntimeEnvironment(
+      {
+        ...base,
+        ORBIT_ENABLED: "true",
+        ORBIT_PUBLIC_URL: "https://orbit.example",
+        ORBIT_API_URL: "https://orbit-api.example",
+        ORBIT_SIGNING_SECRET: "o".repeat(32),
+      },
+      true,
+    ),
+  );
+  assert.throws(
+    () =>
+      validateRuntimeEnvironment(
+        {
+          ...base,
+          ORBIT_ENABLED: "true",
+          ORBIT_API_URL: "https://orbit-api.example",
+          ORBIT_SIGNING_SECRET: "o".repeat(32),
+        },
+        true,
+      ),
+    /ORBIT_PUBLIC_URL, ORBIT_API_URL, and ORBIT_SIGNING_SECRET/,
+  );
+  assert.doesNotThrow(() =>
+    validateRuntimeEnvironment(
+      {
+        ...base,
+        ORBIT_ENABLED: "false",
+      },
+      true,
+    ),
+  );
+});
+
+test("production startup allows the optional interactive Turnstile key to fall back", () => {
+  assert.doesNotThrow(() =>
+    validateRuntimeEnvironment(
+      {
+        NODE_ENV: "production",
+        SESSION_SECRET: "s".repeat(32),
+        TURNSTILE_SITE_KEY: "site-key",
+        TURNSTILE_SECRET_KEY: "secret-key",
+        DATABASE_URL: "postgresql://portal.test/db",
+        BOT_TO_PORTAL_KEY: "b".repeat(32),
+        PORTAL_TO_BOT_KEY: "p".repeat(32),
+        BOT_WEBHOOK_URL: "https://bot.test/callback",
+        DISCORD_CLIENT_ID: "client-id",
+        DISCORD_CLIENT_SECRET: "client-secret",
+        DISCORD_REDIRECT_URI: "https://portal.test/api/auth/callback",
+        CRON_SECRET: "c".repeat(32),
+        TRUSTED_PROXY_MODE: "vercel",
+        RATE_LIMIT_BACKEND: "neon",
+        INTELLIGENCE_URL: "https://intelligence.test",
+        INTELLIGENCE_API_KEY: "intelligence-key",
+      },
+      true,
+    ),
+  );
+});

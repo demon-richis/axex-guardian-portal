@@ -3,12 +3,7 @@ type OrbitResponse = {
   success?: unknown;
 };
 
-function orbitConfig(): { origin: string; secret: string } {
-  const configuredUrl =
-    process.env["ORBIT_API_URL"]?.trim() || process.env["ORBIT_BASE_URL"]?.trim();
-  const secret =
-    process.env["ORBIT_SIGNING_SECRET"]?.trim() || process.env["ORBIT_SITE_SECRET"]?.trim();
-  if (!configuredUrl || !secret) throw new Error("Orbit is not configured");
+function parseOrbitOrigin(configuredUrl: string, variableName: string): string {
   const url = new URL(configuredUrl);
   if (
     url.username ||
@@ -18,10 +13,23 @@ function orbitConfig(): { origin: string; secret: string } {
     url.hash ||
     (process.env["NODE_ENV"] === "production" && url.protocol !== "https:")
   ) {
-    throw new Error("ORBIT_BASE_URL must be an origin-only HTTPS URL in production");
+    throw new Error(`${variableName} must be an origin-only HTTPS URL in production`);
   }
+  return url.origin;
+}
 
-  return { origin: url.origin, secret };
+function orbitConfig(): { origin: string; secret: string } {
+  const configuredUrl =
+    process.env["ORBIT_API_URL"]?.trim() ||
+    process.env["ORBIT_BASE_URL"]?.trim() ||
+    process.env["ORBIT_PUBLIC_URL"]?.trim();
+  const secret =
+    process.env["ORBIT_SIGNING_SECRET"]?.trim() || process.env["ORBIT_SITE_SECRET"]?.trim();
+  if (!configuredUrl || !secret) throw new Error("Orbit is not configured");
+  return {
+    origin: parseOrbitOrigin(configuredUrl, "ORBIT_API_URL"),
+    secret,
+  };
 }
 
 export function orbitEnabled(): boolean {
@@ -46,7 +54,12 @@ async function postOrbit(path: string, body: Record<string, string>): Promise<Or
 }
 
 export function orbitPublicOrigin(): string {
-  return orbitConfig().origin;
+  const configuredUrl =
+    process.env["ORBIT_PUBLIC_URL"]?.trim() ||
+    process.env["ORBIT_BASE_URL"]?.trim() ||
+    process.env["ORBIT_API_URL"]?.trim();
+  if (!configuredUrl) throw new Error("Orbit public URL is not configured");
+  return parseOrbitOrigin(configuredUrl, "ORBIT_PUBLIC_URL");
 }
 
 export async function createOrbitSession(userId: string, guildId: string): Promise<string> {

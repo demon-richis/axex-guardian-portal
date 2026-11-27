@@ -148,7 +148,7 @@ export function validateRuntimeEnvironment(
     INTELLIGENCE_URL: env["INTELLIGENCE_URL"],
     INTELLIGENCE_API_KEY: env["INTELLIGENCE_API_KEY"],
     TURNSTILE_INTERACTIVE_SITE_KEY: env["TURNSTILE_INTERACTIVE_SITE_KEY"]?.trim() || undefined,
-    ORBIT_ENABLED: env["ORBIT_ENABLED"]?.trim().toLowerCase(),
+    ORBIT_ENABLED: env["ORBIT_ENABLED"]?.trim().toLowerCase() || undefined,
     ORBIT_PUBLIC_URL: env["ORBIT_PUBLIC_URL"]?.trim() || undefined,
     ORBIT_API_URL: env["ORBIT_API_URL"]?.trim() || undefined,
     ORBIT_SIGNING_SECRET: env["ORBIT_SIGNING_SECRET"]?.trim() || undefined,

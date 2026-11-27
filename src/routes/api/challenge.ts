@@ -1,4 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { turnstileSiteKeyForLevel } from "@/lib/turnstile-site-key.server";
 import { createHash } from "node:crypto";
 import { z } from "zod";
 
@@ -87,10 +88,7 @@ export const Route = createFileRoute("/api/challenge")({
               }
             }
             const providerIsOrbit = level === "high" && Boolean(orbitBaseUrl);
-            const siteKey =
-              level === "medium"
-                ? process.env["TURNSTILE_INTERACTIVE_SITE_KEY"]
-                : process.env["TURNSTILE_SITE_KEY"];
+            const siteKey = turnstileSiteKeyForLevel(level);
             if (!providerIsOrbit && !siteKey) {
               return Response.json(
                 { success: false, error: "challenge_unavailable" },

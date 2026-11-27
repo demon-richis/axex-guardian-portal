@@ -12,6 +12,7 @@ import { submitVerificationChallenge } from "../src/lib/verification-submit.serv
 import { mapTurnstileError, shouldSubmitTurnstileToken } from "../src/lib/turnstile-client.ts";
 import { turnstileContext, verifyTurnstile } from "../src/lib/turnstile.server.ts";
 import { normalizePortalHostname, validateRuntimeEnvironment } from "../src/lib/security.ts";
+import { turnstileSiteKeyForLevel } from "../src/lib/turnstile-site-key.server.ts";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const migrationDir = join(root, "drizzle");
@@ -360,5 +361,36 @@ test("runtime validation rejects a PORTAL_HOSTNAME containing a scheme or path",
         PORTAL_HOSTNAME: "https://x.vercel.app/",
       }),
     /PORTAL_HOSTNAME must contain only a hostname/,
+  );
+});
+
+
+test("medium verification falls back to the standard Turnstile site key when the interactive key is empty", () => {
+  assert.equal(
+    turnstileSiteKeyForLevel("medium", {
+      TURNSTILE_INTERACTIVE_SITE_KEY: "",
+      TURNSTILE_SITE_KEY: "standard-site-key",
+    }),
+    "standard-site-key",
+  );
+});
+
+test("medium verification prefers the dedicated interactive Turnstile site key", () => {
+  assert.equal(
+    turnstileSiteKeyForLevel("medium", {
+      TURNSTILE_INTERACTIVE_SITE_KEY: " interactive-site-key ",
+      TURNSTILE_SITE_KEY: "standard-site-key",
+    }),
+    "interactive-site-key",
+  );
+});
+
+test("non-medium verification uses the standard Turnstile site key", () => {
+  assert.equal(
+    turnstileSiteKeyForLevel("low", {
+      TURNSTILE_INTERACTIVE_SITE_KEY: "interactive-site-key",
+      TURNSTILE_SITE_KEY: "standard-site-key",
+    }),
+    "standard-site-key",
   );
 });

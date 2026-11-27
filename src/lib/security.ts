@@ -1,5 +1,25 @@
 import { z } from "zod";
 
+function configuredOrbitOrigin(environment: NodeJS.ProcessEnv): string | null {
+  const configuredUrl =
+    environment["ORBIT_PUBLIC_URL"]?.trim() ||
+    environment["ORBIT_BASE_URL"]?.trim() ||
+    environment["ORBIT_API_URL"]?.trim();
+  if (!configuredUrl) return null;
+  const url = new URL(configuredUrl);
+  if (
+    url.username ||
+    url.password ||
+    url.pathname !== "/" ||
+    url.search ||
+    url.hash ||
+    (environment["NODE_ENV"] === "production" && url.protocol !== "https:")
+  ) {
+    throw new Error("Orbit public URL must be an HTTPS origin in production");
+  }
+  return url.origin;
+}
+
 function contentSecurityPolicy(nonce: string, orbitOrigin: string | null): string {
   return [
     "default-src 'self'",
@@ -29,12 +49,12 @@ export function applySecurityHeaders(
   request: Request,
   response: Response,
   nonce: string,
+  environment: NodeJS.ProcessEnv = process.env,
 ): Response {
   const headers = new Headers(response.headers);
   let orbitOrigin: string | null = null;
   try {
-    const configuredOrbitUrl = process.env["ORBIT_BASE_URL"];
-    if (configuredOrbitUrl) orbitOrigin = new URL(configuredOrbitUrl).origin;
+    orbitOrigin = configuredOrbitOrigin(environment);
   } catch {
     orbitOrigin = null;
   }
@@ -83,8 +103,12 @@ export function validateRuntimeEnvironment(
       DISCORD_CLIENT_SECRET: z.string().min(1),
       DISCORD_REDIRECT_URI: z.string().url(),
       TURNSTILE_SITE_KEY: z.string().min(1),
-      TURNSTILE_INTERACTIVE_SITE_KEY: z.string().min(1),
+      TURNSTILE_INTERACTIVE_SITE_KEY: z.string().trim().min(1).optional(),
       TURNSTILE_SECRET_KEY: z.string().min(1),
+      ORBIT_ENABLED: z.enum(["true", "false"]).optional(),
+      ORBIT_PUBLIC_URL: z.string().url().optional(),
+      ORBIT_API_URL: z.string().url().optional(),
+      ORBIT_SIGNING_SECRET: z.string().min(32).optional(),
       ORBIT_BASE_URL: z.string().url().optional(),
       ORBIT_SITE_SECRET: z.string().min(32).optional(),
       BOT_WEBHOOK_URL: z.string().url(),
@@ -123,9 +147,13 @@ export function validateRuntimeEnvironment(
     RATE_LIMIT_BACKEND: rateLimitBackend,
     INTELLIGENCE_URL: env["INTELLIGENCE_URL"],
     INTELLIGENCE_API_KEY: env["INTELLIGENCE_API_KEY"],
-    TURNSTILE_INTERACTIVE_SITE_KEY: env["TURNSTILE_INTERACTIVE_SITE_KEY"],
-    ORBIT_BASE_URL: env["ORBIT_BASE_URL"],
-    ORBIT_SITE_SECRET: env["ORBIT_SITE_SECRET"],
+    TURNSTILE_INTERACTIVE_SITE_KEY: env["TURNSTILE_INTERACTIVE_SITE_KEY"]?.trim() || undefined,
+    ORBIT_ENABLED: env["ORBIT_ENABLED"]?.trim().toLowerCase(),
+    ORBIT_PUBLIC_URL: env["ORBIT_PUBLIC_URL"]?.trim() || undefined,
+    ORBIT_API_URL: env["ORBIT_API_URL"]?.trim() || undefined,
+    ORBIT_SIGNING_SECRET: env["ORBIT_SIGNING_SECRET"]?.trim() || undefined,
+    ORBIT_BASE_URL: env["ORBIT_BASE_URL"]?.trim() || undefined,
+    ORBIT_SITE_SECRET: env["ORBIT_SITE_SECRET"]?.trim() || undefined,
   });
   if (!result.success) {
     const details = result.error.issues
@@ -133,18 +161,31 @@ export function validateRuntimeEnvironment(
       .join("; ");
     throw new Error(`Invalid production environment: ${details}`);
   }
-  if (Boolean(env["ORBIT_BASE_URL"]) !== Boolean(env["ORBIT_SITE_SECRET"])) {
-    throw new Error("ORBIT_BASE_URL and ORBIT_SITE_SECRET must be configured together");
+  const orbitEnabled = result.data.ORBIT_ENABLED === "true";
+  const orbitPublicUrl = result.data.ORBIT_PUBLIC_URL || result.data.ORBIT_BASE_URL;
+  const orbitApiUrl =
+    result.data.ORBIT_API_URL || result.data.ORBIT_BASE_URL || result.data.ORBIT_PUBLIC_URL;
+  const orbitSecret = result.data.ORBIT_SIGNING_SECRET || result.data.ORBIT_SITE_SECRET;
+  if (orbitEnabled && (!orbitPublicUrl || !orbitApiUrl || !orbitSecret)) {
+    throw new Error(
+      "ORBIT_ENABLED=true requires ORBIT_PUBLIC_URL, ORBIT_API_URL, and ORBIT_SIGNING_SECRET",
+    );
   }
-  if (env["ORBIT_BASE_URL"]) {
-    const orbitUrl = new URL(env["ORBIT_BASE_URL"]);
+  for (const [name, value] of [
+    ["ORBIT_PUBLIC_URL", orbitPublicUrl],
+    ["ORBIT_API_URL", orbitApiUrl],
+  ] as const) {
+    if (!value) continue;
+    const orbitUrl = new URL(value);
     if (
       orbitUrl.protocol !== "https:" ||
+      orbitUrl.username ||
+      orbitUrl.password ||
       orbitUrl.pathname !== "/" ||
       orbitUrl.search ||
       orbitUrl.hash
     ) {
-      throw new Error("ORBIT_BASE_URL must be an HTTPS origin without a path");
+      throw new Error(`${name} must be an HTTPS origin without credentials, a path, or query`);
     }
   }
 }

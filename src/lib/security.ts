@@ -116,7 +116,7 @@ export function validateRuntimeEnvironment(
       PORTAL_TO_BOT_KEY: z.string().min(32).optional(),
       AXEX_BOT_API_KEY: z.string().min(32).optional(),
       CRON_SECRET: z.string().min(32),
-      TRUSTED_PROXY_MODE: z.enum(["vercel", "cloudflare"]),
+      TRUSTED_PROXY_MODE: z.enum(["vercel", "cloudflare", "none"]),
       RATE_LIMIT_BACKEND: z.literal("neon"),
       INTELLIGENCE_URL: z.string().url(),
       INTELLIGENCE_API_KEY: z.string().min(1),

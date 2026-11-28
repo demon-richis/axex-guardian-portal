@@ -154,6 +154,29 @@ test("production startup validation requires a sufficiently strong session secre
       true,
     ),
   );
+  assert.doesNotThrow(() =>
+    validateRuntimeEnvironment(
+      {
+        NODE_ENV: "production",
+        SESSION_SECRET: "a".repeat(32),
+        TURNSTILE_SITE_KEY: "site-key",
+        TURNSTILE_SECRET_KEY: "secret-key",
+        DATABASE_URL: "postgresql://portal.test/db",
+        BOT_TO_PORTAL_KEY: "b".repeat(32),
+        PORTAL_TO_BOT_KEY: "p".repeat(32),
+        BOT_WEBHOOK_URL: "https://bot.test/callback",
+        DISCORD_CLIENT_ID: "client-id",
+        DISCORD_CLIENT_SECRET: "client-secret",
+        DISCORD_REDIRECT_URI: "https://portal.test/api/auth/callback",
+        CRON_SECRET: "c".repeat(32),
+        TRUSTED_PROXY_MODE: "none",
+        RATE_LIMIT_BACKEND: "neon",
+        INTELLIGENCE_URL: "https://intelligence.test",
+        INTELLIGENCE_API_KEY: "intelligence-key",
+      },
+      true,
+    ),
+  );
   assert.doesNotThrow(() => validateRuntimeEnvironment({ NODE_ENV: "development" }, false));
   assert.throws(
     () =>

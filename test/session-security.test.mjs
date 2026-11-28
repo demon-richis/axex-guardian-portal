@@ -141,6 +141,7 @@ test("production startup validation requires a sufficiently strong session secre
         DATABASE_URL: "postgresql://portal.test/db",
         BOT_TO_PORTAL_KEY: "b".repeat(32),
         PORTAL_TO_BOT_KEY: "p".repeat(32),
+        AXEX_BOT_API_KEY: "legacy-placeholder",
         BOT_WEBHOOK_URL: "https://bot.test/callback",
         DISCORD_CLIENT_ID: "client-id",
         DISCORD_CLIENT_SECRET: "client-secret",

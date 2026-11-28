@@ -114,7 +114,7 @@ export function validateRuntimeEnvironment(
       BOT_WEBHOOK_URL: z.string().url(),
       BOT_TO_PORTAL_KEY: z.string().min(32).optional(),
       PORTAL_TO_BOT_KEY: z.string().min(32).optional(),
-      AXEX_BOT_API_KEY: z.string().min(32).optional(),
+      AXEX_BOT_API_KEY: z.string().optional(),
       CRON_SECRET: z.string().min(32),
       TRUSTED_PROXY_MODE: z.enum(["vercel", "cloudflare", "none"]),
       RATE_LIMIT_BACKEND: z.literal("neon"),
@@ -122,7 +122,9 @@ export function validateRuntimeEnvironment(
       INTELLIGENCE_API_KEY: z.string().min(1),
     })
     .superRefine((values, context) => {
-      if (!(values.BOT_TO_PORTAL_KEY && values.PORTAL_TO_BOT_KEY) && !values.AXEX_BOT_API_KEY) {
+      const hasDirectionalKeys = Boolean(values.BOT_TO_PORTAL_KEY && values.PORTAL_TO_BOT_KEY);
+      const hasValidLegacyKey = Boolean(values.AXEX_BOT_API_KEY && values.AXEX_BOT_API_KEY.length >= 32);
+      if (!hasDirectionalKeys && !hasValidLegacyKey) {
         context.addIssue({
           code: "custom",
           path: ["BOT_TO_PORTAL_KEY"],

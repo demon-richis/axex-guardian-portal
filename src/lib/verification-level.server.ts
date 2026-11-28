@@ -88,7 +88,7 @@ export function classifyVerificationLevel(input: {
 
   let detectedLevel: VerificationLevel = "low";
   if (
-    (input.accountAgeDays < 1 && defaultAvatar) ||
+    (input.accountAgeDays <= 1 && defaultAvatar) ||
     (vpn && input.accountAgeDays < 7) ||
     riskSignals.flaggedUserAlt === true ||
     riskSignals.raidBurst === true

@@ -31,6 +31,22 @@ test("high and medium conditions follow the portal level thresholds", () => {
     }),
     "high",
   );
+  assert.equal(
+    classifyVerificationLevel({
+      ...base,
+      accountAgeDays: 1,
+      riskSignals: { defaultAvatar: true },
+    }),
+    "high",
+  );
+  assert.equal(
+    classifyVerificationLevel({
+      ...base,
+      accountAgeDays: 1.001,
+      riskSignals: { defaultAvatar: true },
+    }),
+    "medium",
+  );
   assert.equal(classifyVerificationLevel({ ...base, accountAgeDays: 3 }), "medium");
   assert.equal(classifyVerificationLevel({ ...base, vpnDetected: true }), "medium");
   assert.equal(
